@@ -1,120 +1,96 @@
 # DeepSeek Deck
 
-**DeepSeek Harness 的独立桌面应用**（Windows / macOS / Linux）。当前版本 **v0.11.0**。
+**DeepSeek Harness 的独立桌面应用**，Windows / macOS / Linux 三平台可用。
 
-DeepSeek Harness 是 DeepSeek 官方的 AI 智能体工作台：写代码、查资料、建知识库、编排多步骤任务，跑在你自己电脑上的完整 AI 工作环境。官方形态是一个本地网页服务，平时要在浏览器里打开使用。
+一个应用，把 DeepSeek Harness 从浏览器里请出来：不用记网址、不用敲命令、不用装 Node.js——下载、安装、双击打开，完事。
 
-**DeepSeek Deck 把 Harness 从浏览器里请了出来**——基于 DeepSeek Harness 开发，给它配上了独立的桌面窗口、常驻托盘和服务管理，双击图标就能进，体验和原生软件一样。
+> 社区桌面版，非 DeepSeek 官方产品。
 
-> An standalone desktop app for DeepSeek Harness — one window, one tray icon, zero browser tabs. Works on Windows, macOS and Linux.
+## 这是什么？
 
-## 为什么用 Deck 而不是浏览器
+**DeepSeek Harness** 是 DeepSeek 官方的 AI 智能体工作台。简单说：它是一个跑在你电脑上的 AI 工作环境，能帮你写代码、查资料、建知识库、编排多步骤任务。官方版本是一个本地网页服务，平时你得开浏览器、输入网址才能用。
+
+**DeepSeek Deck** 就是给 Harness 配了一个"真正的应用外壳"：独立窗口、系统托盘、服务自动管理。打开它就像打开微信、打开 Obsidian 一样自然——双击图标，界面就出来了。
+
+## 界面长这样
+
+![DeepSeek Deck 主界面（深色模式）](docs/screenshot.png)
+
+## 用 Deck 和用浏览器有什么区别？
 
 | | 浏览器打开 Harness | DeepSeek Deck |
 |---|---|---|
-| 打开方式 | 记地址、开浏览器、找标签页 | 双击图标，即开即用 |
-| 窗口 | 淹没在标签页里 | 独立窗口，Command+Tab 直达 |
-| 后台常驻 | 关标签就断了 | 托盘驻留，关窗不退出，随时呼出 |
-| 服务管理 | 手动启动/排查 | 自动拉起、崩溃自愈、托盘一键启停 |
-| 前置依赖 | 需自装 Node.js 与 dsh | **免安装**：运行时内置在安装包里 |
-| 更新 | — | 与 Harness 解耦，Harness 更新无需动 Deck |
+| 打开方式 | 记网址 → 开浏览器 → 找标签页 | 双击图标，即开即用 |
+| 窗口 | 和几十个标签挤在一起 | 独立窗口，Command+Tab 直达 |
+| 后台 | 关标签就断了 | 托盘驻留，关窗不退出，随时呼出 |
+| 服务管理 | 自己启动、自己排查 | 自动拉起、崩溃自愈、托盘一键启停 |
+| 安装 | 需要先装 Node.js 和 dsh 命令行工具 | **什么都不用装**，安装包自带一切 |
 
-## 界面
+## 主要功能
 
-![DeepSeek Deck 主界面](docs/screenshot.png)
+- **独立桌面窗口**：Harness 完整界面（会话、工作区、模型切换、工具模式）一个不少，窗口位置大小自动记忆
+- **托盘常驻**：服务运行状态一眼可见；显示/隐藏窗口、启停服务、打开浏览器版、退出，都在托盘
+- **服务自动管理**：启动时自动拉起 dsh 服务，崩溃自动重连；Windows/Linux 退出应用时自动清理服务进程，不留残留
+- **开机自启**（可选）：登录系统后自动运行，随时待命
+- **检查更新**：托盘一键检查新版本，有更新直接跳转下载
+- **内置运行时**：安装包捆绑了 Harness 所需的运行环境，与 Harness 本体更新完全解耦——Harness 升级不需要重新安装 Deck
 
-## 特性
+## 下载安装
 
-- **免安装**：安装包自带 Node.js 22 + dsh 运行时，下载即用，不需要装任何依赖
-- 独立窗口承载 Harness 完整界面（会话、工作区、模型切换、工具模式一个不少）
-- 托盘常驻：运行状态一目了然，启停服务/浏览器打开/退出都在托盘
-- 服务自动管理：启动时自动拉起 `dsh web`，崩溃自动重连，不需要碰终端
-- 桌面体验：开机自启开关、检查更新、一键打开日志目录、加载/错误页跟随系统深浅色
-- 窗口状态记忆：记住尺寸位置，拔掉外接显示器自动回正
-- 黑渐变海豚图标，三平台原生外观
+到 [Releases 页面](https://github.com/MartyYao/deepseek-harness-deck/releases) 下载你的平台对应的文件：
 
-## 下载
-
-从 [Releases](https://github.com/MartyYao/deepseek-harness-deck/releases) 下载对应平台产物：
-
-| 平台 | 产物 | 说明 |
+| 你的系统 | 下载哪个 | 怎么装 |
 |---|---|---|
-| macOS | `.dmg` / `.zip`（arm64 与 x64 两种） | 未签名：首次打开请右键 →「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/DeepSeek\ Harness.app` |
-| Windows | `.exe`（NSIS 安装包） | 双击安装即可 |
-| Linux | `.AppImage` / `.deb` | AppImage 先 `chmod +x` 再执行；deb 用 `sudo dpkg -i` 安装 |
+| macOS（Apple 芯片） | `DeepSeek.Harness-0.11.0-arm64.dmg` | 打开 dmg，把应用拖进「应用程序」文件夹 |
+| macOS（Intel） | `DeepSeek.Harness-0.11.0.dmg` | 同上 |
+| Windows | `DeepSeek.Harness.Setup.0.11.0.exe` | 双击安装，一路下一步 |
+| Linux | `.AppImage` 或 `.deb` | AppImage：`chmod +x` 后双击；deb：`sudo dpkg -i` 安装 |
 
-> 安装包体积较 v0.10.0 明显增大：内置 Node.js 22（约 106MB）与预装的 dsh 及其依赖（约 343MB，含 node-pty/sharp 等原生模块），未压缩共约 450MB，压缩后安装包预计增加 250–350MB，换来零依赖开箱即用。
+> macOS 版本未做代码签名，首次打开如果被系统拦截：右键点击应用 →「打开」即可。Windows 的 SmartScreen 提示选「仍要运行」。
 
-## 前置依赖
+## 使用
 
-**无需任何前置依赖。** v0.11.0 起安装包内置完整运行时（Node.js + dsh），下载安装即用。
+- **macOS**：服务由系统 launchd 托管，托盘点「启动 DSH 服务」即可
+- **Windows / Linux**：打开应用自动启动服务，关闭应用自动停止，全程不用管
+- 服务日志在应用数据目录的 `logs/dsh-web.log`（托盘菜单可直接打开日志文件夹）
 
-可选：系统已全局安装 dsh（`npm i -g @deepseek-ai/dsh`）时，Deck 会**优先使用系统版**（便于随 `npm update` 独立升级 Harness）；未安装则自动回退到内置运行时。也可用环境变量 `DSH_BIN` 显式指定 dsh 路径（优先级最高）。
+## 和官方 DeepSeek Harness 的关系
 
-## 使用方法
+DeepSeek Harness 的核心能力（AI 引擎、插件系统、网页界面）全部来自官方项目 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)。本项目只负责桌面封装这一层：
 
-### macOS
+- 桌面应用外壳（窗口、托盘、界面承载）
+- 本地服务生命周期管理
+- 跨平台安装包构建与发布
+- 面向桌面环境的体验优化
 
-服务由 **launchd 托管**（托盘「启动 DSH 服务」即可，也可用 `deploy/dsh-web-launcher.sh`）。Deck 只发 `launchctl` 命令、不直接拉起服务进程——这保证服务以正确的系统身份运行，首次访问 iCloud 目录时按系统提示授权即可。
-
-### Windows / Linux
-
-Deck 启动时自动 **spawn `dsh web` 子进程**，退出时自动停止（整棵进程树清理，不留孤儿）。dsh 来源按优先级查找：`DSH_BIN` 环境变量 → PATH 中的系统版 → 安装包内置运行时。服务日志在（托盘「打开日志目录」可直达）：
-
-- Windows：`%APPDATA%/DeepSeek Harness/logs/dsh-web.log`
-- Linux：`~/.config/DeepSeek Harness/logs/dsh-web.log`
-
-### 托盘菜单
-
-- **DeepSeek Deck v…（服务：运行中/已停止）**：顶部只读状态项
-- **显示 / 隐藏窗口**：单击托盘图标同效
-- **启动 / 停止 DSH 服务**：macOS 走 launchctl，Windows/Linux 拉起或终止 dsh 子进程
-- **在浏览器中打开**：需要浏览器版时随时可切
-- **开机自启**：勾选即生效（macOS 登录后静默启动不抢焦点；Linux 不支持，请用系统自启）
-- **检查更新…**：对比 GitHub Releases 最新版本，有新版可一键打开下载页
-- **打开日志目录**：排障直达服务日志
-- **退出**：退出应用（Windows/Linux 一并停止 dsh 子进程）
-
-## 环境变量
-
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `DSH_SHELL_URL` | `http://127.0.0.1:3080` | dsh web 地址 |
-| `DSH_SHELL_NO_TRAY` | — | 设为非空即不创建托盘（无托盘时关窗即退出） |
-| `DSH_BIN` | — | dsh 可执行文件路径覆盖，优先级最高（Windows 上可指向 `dsh.cmd` 全路径）；不设置时依次查 PATH 系统版、内置运行时 |
-
-## 架构
-
-Deck 与 Harness 完全解耦，只依赖稳定的 HTTP 接口（web UI + `/api`），不碰 Harness 内部文件，因此 **Harness 升级不需要重新发布 Deck**。服务生命周期按平台分支：
-
-- **macOS**：launchd 托管。Deck 仅通过 `launchctl bootstrap/kickstart/bootout` 控制，保证服务以正确身份运行（iCloud 授权链不断）
-- **Windows / Linux**：子进程模式。Deck spawn `dsh web`（三级查找：`DSH_BIN` → PATH 系统版 → 内置运行时 `resources/node-bin` + `resources/dsh-runtime`），日志落 `userData/logs/dsh-web.log`，退出时终止整棵进程树
-- **内置运行时**：官方 Node.js 22 二进制 + 预装的 `@deepseek-ai/dsh`（含原生模块，按标准 Node ABI 编译，与 Electron 内核解耦），构建期由 CI 下载打包（见 `.github/workflows/release.yml`）
+**Deck 与 Harness 通过稳定的本地 HTTP 接口通信，完全不碰 Harness 内部文件**，因此 Harness 升级不会影响 Deck，两者互不干扰。
 
 ## 从源码构建
 
 ```bash
 cd dsh-shell/app
 npm install
-# 打包前需先准备内置运行时（否则 electron-builder 因 extraResources 缺失报错），
-# 步骤见 .github/workflows/release.yml 的「准备捆绑运行时」：下载 Node 22 到
-# resources/node-bin，并用其自带 npm 安装 dsh 到 resources/dsh-runtime
-npm run dist:mac    # macOS：dmg + zip（--arm64 / --x64 指定架构）
-npm run dist:win    # Windows：nsis 安装包
-npm run dist:linux  # Linux：AppImage + deb
+npm run dist:mac    # macOS
+npm run dist:win    # Windows
+npm run dist:linux  # Linux
 ```
 
-开发模式 `npm start` 不需要内置运行时——系统已装 dsh 即可正常运行。
-
-仓库带 GitHub Actions（`.github/workflows/release.yml`）：推送 `v*` 标签即三平台矩阵构建（自动准备内置运行时）并发布 Release。
-
-## 已知限制
-
-- 安装包体积：内置运行时（Node + dsh 依赖，未压缩约 450MB）使产物明显增大（一次性下载，省去装依赖）
-- macOS 服务依赖 launchd（`LaunchAgents/ai.dsh.web.plist` 需已安装或由 Deck 自动注册）
-- Windows / Linux 上服务生命周期绑定应用进程：退出应用即停止服务；需要常驻服务请自行用任务管理器 / systemd 托管 `dsh web`（或开启「开机自启」让 Deck 随系统启动）
-- 产物未做代码签名：macOS 首次打开需右键打开 / `xattr` 去隔离，Windows SmartScreen 可能提示
+仓库自带 GitHub Actions：推送 `v*` 标签即自动构建三平台安装包并发布 Release。
 
 ## License
 
-MIT
+本项目使用 **MIT 许可证**（[LICENSE](LICENSE)）。
+
+用大白话说，MIT 是开源世界里最宽松的许可证之一，意思是：
+
+- **你可以自由使用**：包括个人使用、公司商用，都不需要付费，也不需要申请授权
+- **你可以自由修改**：按你的需要改代码，甚至改完闭源发布都行
+- **你可以自由分发**：重新打包、再发布（包括收费分发）都可以
+- **唯一要求**：保留版权声明——分发时带上原作者的版权和许可信息（即 LICENSE 文件不能删）
+- **没有担保**：代码按"现状"提供，作者不对使用它造成的任何损失负责
+
+**简单说：随便用、随便改、随便发，保留一句版权声明即可。**
+
+---
+
+*DeepSeek Deck 是基于 DeepSeek Harness 构建的社区桌面版本，与 DeepSeek 官方无隶属关系。*
