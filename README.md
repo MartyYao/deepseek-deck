@@ -1,10 +1,10 @@
 # DeepSeek Deck
 
-**DeepSeek Harness 的独立桌面应用**，Windows / macOS / Linux 三平台可用。
+**DeepSeek Harness 的轻量化独立桌面应用**，Windows / macOS / Linux 三平台可用。
 
 一个应用，把 DeepSeek Harness 从浏览器里请出来：不用记网址、不用敲命令、不用装 Node.js——下载、安装、双击打开，完事。
 
-> 社区桌面版，非 DeepSeek 官方产品。
+> 个人制作桌面版，非 DeepSeek 官方产品。
 
 ## 这是什么？
 
