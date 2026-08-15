@@ -1,4 +1,6 @@
-// dsh-shell app — Electron 主进程（v0.11.0, 2026-08-15；三平台 + 捆绑运行时版）
+// dsh-shell app — Electron 主进程（v0.12.0, 2026-08-15；三平台 + 双更新通道版）
+// v0.12.0：dsh 更新检测 + 一键更新（bundled 运行时首启迁 userData，包内 Resources 只读不可写）；
+//         Deck 更新引导增强（弹窗「下载并安装」→ 下载对应平台安装包，方案 A 不引入 electron-updater）。
 // 独立桌面壳（Windows / macOS / Linux）：加载 http://127.0.0.1:3080 的 dsh web。
 // 服务托管按平台分支：
 //   - macOS：launchd 托管（TCC 红线：责任进程 = node 二进制，壳只发 launchctl 命令，
@@ -9,7 +11,7 @@
 //     （resources/node-bin/node + resources/dsh-runtime 内预装的 @deepseek-ai/dsh，免安装）。
 // 与 DSH 更新解耦：壳只依赖稳定 HTTP 表面（web UI + /api），不 import 任何 DSH 包。
 
-import { app, BrowserWindow, Tray, Menu, shell, session, dialog, Notification, ipcMain, nativeImage, screen } from 'electron';
+import { app, BrowserWindow, Tray, Menu, shell, session, dialog, clipboard, Notification, ipcMain, nativeImage, screen } from 'electron';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -33,6 +35,10 @@ const APP_TITLE = 'DeepSeek Harness';
 // canonical 仓库名 deepseek-harness-deck（旧名 deepseek-deck 301 重定向，atom 跟随重定向但仍用新名）
 const RELEASES_URL = 'https://github.com/MartyYao/deepseek-harness-deck/releases';
 const RELEASES_ATOM = RELEASES_URL + '.atom'; // atom 免登录、github.com 域名可达
+// dsh 更新检测/更新走 npmmirror：官方 registry.npmjs.org 国内不通（npmmirror 实测 0.2s 可达，
+// 海外用户亦可直连；如需官方源改这一处即可）
+const DSH_REGISTRY = 'https://registry.npmmirror.com';
+const DSH_LATEST_URL = `${DSH_REGISTRY}/@deepseek-ai/dsh/latest`;
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 const ASSETS = (name) => path.join(__dirname, 'assets', name);
 
@@ -43,7 +49,7 @@ let loadFailures = 0;
 let trayRefreshInFlight = false;
 let dshChild = null;       // win/linux：壳 spawn 的 `dsh web` 子进程
 let lastSpawnError = null; // win/linux：最近一次 spawn 失败原因（如 dsh 未安装且捆绑运行时缺失）
-let dshSource = null;      // win/linux：实际使用的 dsh 来源（env/system/bundled），记日志便于排障
+let dshSource = null;      // win/linux：实际使用的 dsh 来源（env/system/bundled-userdata/bundled-resources），记日志便于排障
 let lastTrayRunning = null; // 托盘菜单顶部只读项含服务状态：状态变化才重建菜单
 let lastNotifiedSpawnError = null; // P2-2：同一 spawn 失败只通知一次（引用比较去重）
 
@@ -85,7 +91,7 @@ async function startService() {
     return;
   }
   if (dshChild && dshChild.exitCode === null && dshChild.signalCode === null) return; // 已在跑
-  spawnDshChild();
+  await spawnDshChild();
 }
 
 async function stopService() {
@@ -105,6 +111,32 @@ function dshLogFd() {
 // ── dsh 来源三级查找（win/linux spawn 分支使用）────────────────────────────────
 // 1) DSH_BIN 显式覆盖  2) PATH 中的系统版 dsh（兼容老用户，可随 npm update 升级）
 // 3) 安装包捆绑运行时（免安装：官方 Node 二进制 + 预装的 @deepseek-ai/dsh）
+// v0.12.0：捆绑运行时拆两级——userData 副本优先（可写，一键更新落在它上面），
+// resources 兜底（app 包内 Resources/ 受签名/权限保护只读，仅首启迁移失败时用到）。
+const runtimeDir = () => path.join(app.getPath('userData'), 'dsh-runtime');
+const resourcesRuntimeDir = () => path.join(process.resourcesPath, 'dsh-runtime');
+const dshCliIn = (root) => path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+const dshPkgIn = (root) => path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'package.json');
+
+// 延迟迁移（P2-2）：不再 whenReady 无条件执行，仅当 resolveDsh 即将落到 bundled-resources
+// 兜底时才迁移（spawnDshChild 触发）——命中 DSH_BIN/PATH 系统版的用户不白复制 343MB。
+// 完成标记 = 有意义文件存在（bin.js + package.json），而非「目录存在」（P1-1）：迁移中断
+// 留下半成品目录时重跑 cpSync（对已存在目录为合并覆盖，可自愈残缺副本，已实测）。
+// 失败仅记日志、不阻塞启动——resolveDsh 会走 resources 兜底分支（只读但仍可运行）。
+function migrateBundledRuntime() {
+  try {
+    const dest = runtimeDir();
+    if (fs.existsSync(dshCliIn(dest)) && fs.existsSync(dshPkgIn(dest))) return; // 已迁移完成
+    const src = resourcesRuntimeDir();
+    if (!fs.existsSync(dshCliIn(src))) return; // 开发模式/安装包无捆绑运行时
+    console.log('[dsh-shell] 迁移捆绑运行时到 userData…');
+    fs.cpSync(src, dest, { recursive: true });
+    console.log('[dsh-shell] 运行时迁移完成:', dest);
+  } catch (err) {
+    console.error('[dsh-shell] 运行时迁移失败（不影响启动，走 resources 兜底）:', err.message);
+  }
+}
+
 function findOnPath(name) {
   const exts = isWin ? ['.cmd', '.exe', '.bat', ''] : [''];
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
@@ -121,17 +153,29 @@ function resolveDsh() {
   if (findOnPath('dsh')) return { kind: 'system', bin: 'dsh', args: ['web'], shell: isWin };
   // 捆绑运行时：直接 spawn node + dsh CLI 入口（bin 经 npm view 确认为 lib/bin.js），不经 shell——
   // 非 .cmd 无 shell 坑；路径含空格（Windows 安装目录）也无需转义。找不到返回 null。
+  // userData 副本优先，否则回退 resources 只读副本；命中条件 = bin.js + package.json 都存在
+  // （P1-1：半成品迁移目录恰好含 bin.js 但缺 package.json 时不命中，杜绝残缺运行时）。
+  // node 二进制始终用 resources 的——node 随 Deck 版本走，不独立更新。
   const nodeBin = path.join(process.resourcesPath, 'node-bin', isWin ? 'node.exe' : 'node');
-  const dshCli = path.join(process.resourcesPath, 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
-  if (fs.existsSync(nodeBin) && fs.existsSync(dshCli)) {
-    return { kind: 'bundled', bin: nodeBin, args: [dshCli, 'web'], shell: false };
+  for (const [kind, root] of [['bundled-userdata', runtimeDir()], ['bundled-resources', resourcesRuntimeDir()]]) {
+    const dshCli = dshCliIn(root);
+    if (fs.existsSync(nodeBin) && fs.existsSync(dshCli) && fs.existsSync(dshPkgIn(root))) {
+      return { kind, bin: nodeBin, args: [dshCli, 'web'], shell: false, runtimeRoot: root };
+    }
   }
   return null;
 }
 
-function spawnDshChild() {
+async function spawnDshChild() {
   lastSpawnError = null;
-  const resolved = resolveDsh();
+  let resolved = resolveDsh();
+  // P2-2 延迟迁移：即将落到 resources 只读兜底时，先尝试把捆绑运行时迁到 userData，
+  // 迁移成功则本次直接用可写副本（重 resolve 一次）；失败维持 resources 兜底。
+  // 命中 env/system 的用户完全不触发迁移；whenReady 不再无条件迁移。
+  if (resolved && resolved.kind === 'bundled-resources') {
+    migrateBundledRuntime();
+    resolved = resolveDsh();
+  }
   if (!resolved) {
     // 未装系统版 dsh 且捆绑运行时缺失（开发模式 npm start、或安装包不完整）
     lastSpawnError = new Error('未找到 dsh：DSH_BIN 未设置、PATH 无 dsh、捆绑运行时缺失');
@@ -333,21 +377,23 @@ function compareSemver(a, b) {
   return 0;
 }
 
-// 遍历所有 <entry>，取第一个严格匹配正式版 tag（v?x.y.z）的版本号；
+// 遍历所有 <entry>，取第一个严格匹配正式版 tag（v?x.y.z）的 tag 原文（如 "v0.12.0"）；
 // 含 - 后缀（rc/beta/alpha）或不含版本号的 prerelease 条目直接跳过——
-// releases.atom 首条不保证是最新正式版。标题正则仅作无 tag 时的兜底。
+// releases.atom 首条不保证是最新正式版。标题正则仅作无 tag 时的兜底（P2-8：兜底也补
+// v 前缀，与 tag 分支同构，/download/<tag>/ 段可直接用）。
+// 返回值保留 tag 原文：下载 URL 的 /download/<tag>/ 段直接用它，比较版本时再剥 v 前缀。
 function latestStableFromAtom(xml) {
   const entries = xml.match(/<entry>[\s\S]*?<\/entry>/g) || [];
   for (const entry of entries) {
     const id = entry.match(/<id>([^<]+)<\/id>/);
     const tag = id && id[1].trim().split('/').pop(); // 形如 .../releases/tag/v0.10.0
     if (tag) {
-      if (/^v?\d+\.\d+\.\d+$/.test(tag)) return tag.replace(/^v/, '');
+      if (/^v?\d+\.\d+\.\d+$/.test(tag)) return tag;
       continue; // tag 非正式版（含 rc/beta 等后缀）→ 跳过本 entry
     }
     const title = entry.match(/<title>\s*([^<]+?)\s*<\/title>/);
-    const v = title && title[1].match(/(\d+\.\d+\.\d+)/);
-    if (v) return v[1];
+    const m = title && title[1].match(/(\d+\.\d+\.\d+)/);
+    if (m) return `v${m[1]}`;
   }
   throw new Error('atom 中未解析到正式版版本号');
 }
@@ -368,29 +414,38 @@ async function fetchLatestVersion() {
   } finally { clearTimeout(t); }
 }
 
-// interactive=true（托盘菜单点击）：有新版弹框（可跳 Releases）；无新版/失败仅 Notification。
-// interactive=false：只记日志，不打扰用户。该静默入口为预留（P2-10 决策：
-// 有意不接定时器自动检查，保持纯手动触发，仅保留此入口供未来启用）。
-// updateCheckInFlight 防重入：托盘连点/与未来的静默检查并发时直接返回。
+// interactive=true（托盘菜单点击）：有新版弹框（「下载并安装」主按钮 + 跳 Releases 备用）；
+// 无新版/失败仅 Notification。interactive=false：只记日志，不打扰用户。该静默入口为预留
+// （P2-10 决策：有意不接定时器自动检查，保持纯手动触发，仅保留此入口供未来启用）。
+// updateCheckInFlight 防重入：托盘连点/与 dsh 更新检查/未来的静默检查并发时直接返回，
+// 交互入口被拦截时补 Notification 提示（P1-3）。
 let updateCheckInFlight = false;
 async function checkForUpdates(interactive) {
-  if (updateCheckInFlight) return;
+  if (updateCheckInFlight) {
+    // P1-3：交互点击被防重拦截时补提示，不再静默吞掉（与 dshUpdateInFlight 分支同风格）
+    if (interactive && Notification.isSupported()) {
+      new Notification({ title: APP_TITLE, body: '正在检查更新，请稍候…' }).show();
+    }
+    return;
+  }
   updateCheckInFlight = true;
   try {
-    const latest = await fetchLatestVersion();
+    const latestTag = await fetchLatestVersion(); // tag 原文（如 v0.12.0）
+    const latest = latestTag.replace(/^v/, '');
     const current = app.getVersion();
     if (compareSemver(latest, current) > 0) {
-      console.log(`[dsh-shell] 发现新版本 v${latest}（当前 v${current}）`);
+      console.log(`[dsh-shell] 发现新版本 ${latestTag}（当前 v${current}）`);
       const { response } = await dialog.showMessageBox({
         type: 'info',
         title: '发现新版本',
         message: `DeepSeek Deck v${latest} 已发布`,
-        detail: `当前版本 v${current}。`,
-        buttons: ['打开 Releases', '稍后'],
+        detail: `当前版本 v${current}。可下载安装包后手动安装（覆盖安装即可），或打开 Releases 页面自选资产。`,
+        buttons: ['下载并安装', '打开 Releases', '稍后'],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: 2,
       });
-      if (response === 0) shell.openExternal(RELEASES_URL);
+      if (response === 0) downloadDeckUpdate(latestTag);
+      else if (response === 1) shell.openExternal(RELEASES_URL);
     } else {
       console.log(`[dsh-shell] 已是最新版本（v${current}）`);
       if (interactive && Notification.isSupported()) {
@@ -404,6 +459,282 @@ async function checkForUpdates(interactive) {
     }
   } finally {
     updateCheckInFlight = false;
+  }
+}
+
+// ── Deck 更新引导：下载安装包（方案 A 定案：不引入 electron-updater 自动安装）─────
+// 资产名按 release.yml 实际产物（electron-builder 默认命名，版本段不带 v 前缀，
+// 已对照 v0.11.0 Release 资产核实）：
+//   mac arm64: DeepSeek.Harness-<v>-arm64.dmg ；mac x64: DeepSeek.Harness-<v>.dmg
+//   win:       DeepSeek.Harness.Setup.<v>.exe
+//   linux:     DeepSeek.Harness-<v>.AppImage（.deb 不自动下载，走 Releases 页面）
+// /download/<tag>/ 段用 atom 解析出的 tag 原文（带 v 前缀），文件名段用剥掉 v 的版本号。
+function deckAssetUrl(tag) {
+  const v = tag.replace(/^v/, '');
+  const base = `${RELEASES_URL}/download/${tag}/`;
+  if (isMac) return base + (process.arch === 'arm64' ? `DeepSeek.Harness-${v}-arm64.dmg` : `DeepSeek.Harness-${v}.dmg`);
+  if (isWin) return base + `DeepSeek.Harness.Setup.${v}.exe`;
+  return base + `DeepSeek.Harness-${v}.AppImage`;
+}
+
+// P1-4：模块级保存 will-download 监听器引用——downloadURL 网络失败不触发 will-download 时
+// 监听器会常驻、反复触发则累加；注册前移除旧引用，done 时移除并置 null。
+let deckWillDownloadHandler = null;
+function downloadDeckUpdate(tag) {
+  const url = deckAssetUrl(tag);
+  const ses = session.defaultSession;
+  const notify = (body) => { if (Notification.isSupported()) new Notification({ title: APP_TITLE, body }).show(); };
+  const expectedExt = isMac ? '.dmg' : (isWin ? '.exe' : '.AppImage'); // P2-3：完成时校验扩展名
+  if (deckWillDownloadHandler) ses.removeListener('will-download', deckWillDownloadHandler);
+  const onDownload = (_event, item) => {
+    // P2-10：下载目录被用户删过则重建；P2-3：文件名来自服务器 Content-Disposition，basename 去路径
+    const downloadsDir = app.getPath('downloads');
+    fs.mkdirSync(downloadsDir, { recursive: true });
+    const savePath = path.join(downloadsDir, path.basename(item.getFilename()));
+    item.setSavePath(savePath); // 免系统保存对话框，直接落下载目录
+    item.once('done', (_e, state) => {
+      ses.removeListener('will-download', onDownload);
+      if (deckWillDownloadHandler === onDownload) deckWillDownloadHandler = null;
+      // P2-3：completed ≠ 有效——资产名漂移 404 时 GitHub 的 HTML 错误页可能被存成预期
+      // 文件名；校验文件存在 + 大小 > 1MB + 扩展名符合预期，异常走 Releases 兜底
+      const valid = state === 'completed' && (() => {
+        try { return fs.statSync(savePath).size > 1024 * 1024 && savePath.endsWith(expectedExt); }
+        catch { return false; }
+      })();
+      if (valid) {
+        console.log('[dsh-shell] Deck 安装包下载完成:', savePath);
+        notify('安装包下载完成，已打开所在文件夹，请运行安装');
+        shell.showItemInFolder(savePath);
+      } else {
+        // 中断/失败/校验未通过：提示 + 保留「打开 Releases」备用路径
+        console.log('[dsh-shell] Deck 安装包下载无效:', state, savePath);
+        notify(`安装包下载未完成（${state === 'completed' ? '文件校验未通过' : state}），已打开 Releases 页面可手动下载`);
+        shell.openExternal(RELEASES_URL);
+      }
+    });
+  };
+  deckWillDownloadHandler = onDownload;
+  ses.on('will-download', onDownload);
+  ses.downloadURL(url); // 走 Chromium 网络栈，自动读系统代理
+  console.log('[dsh-shell] 开始下载 Deck 安装包:', url);
+  notify('开始下载安装包…');
+}
+
+// ── dsh 更新检测 + 一键更新（npmmirror；bundled 运行时落在 userData 副本）────────
+async function fetchLatestDshVersion() {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000); // 8s 超时，不卡托盘菜单
+  try {
+    // 同 Deck 检测：session.fetch 走 Chromium 网络栈读系统代理
+    const res = await session.defaultSession.fetch(DSH_LATEST_URL, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': `deepseek-harness-deck/${app.getVersion()}` },
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!data || typeof data.version !== 'string') throw new Error('registry 响应缺少 version 字段');
+    return data.version;
+  } finally { clearTimeout(t); }
+}
+
+// shell:true 变体：win 上系统版 dsh 是 dsh.cmd（cmd shim），必须经 cmd.exe 执行（同 spawnDshChild 逻辑）
+function runShell(cmd, args) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: 15000, shell: true }, (err, stdout, stderr) => {
+      resolve({ code: err ? (err.code ?? 1) : 0, out: String(stdout || '') + String(stderr || '') });
+    });
+  });
+}
+
+// 当前 dsh 版本，按 resolveDsh 实际命中分支取：
+// - bundled-userdata / bundled-resources：读对应运行时目录里 @deepseek-ai/dsh/package.json 的 version
+// - env / system：执行 `dsh --version`（win 经 shell 兼容 dsh.cmd）从输出抓版本号
+async function currentDshVersion(resolved) {
+  if (!resolved) return null;
+  if (resolved.runtimeRoot) {
+    try {
+      return JSON.parse(fs.readFileSync(dshPkgIn(resolved.runtimeRoot), 'utf8')).version || null;
+    } catch { return null; }
+  }
+  const r = resolved.shell
+    ? await runShell(`"${resolved.bin}"`, ['--version'])
+    : await run(resolved.bin, ['--version']);
+  const m = r.out.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/);
+  return m ? m[0] : null;
+}
+
+// interactive=true（托盘菜单点击）：有新版弹窗——bundled 分支（仅非 mac，P1-2）给「立即更新」，
+// env/system 及 mac 一律给升级命令 + 「复制命令」；无新版/失败仅 Notification。
+// interactive=false：有新版仅 Notification，不弹窗。
+// 与 Deck 检查共用 updateCheckInFlight 防重；更新执行期间（dshUpdateInFlight）直接提示进行中。
+async function checkDshUpdate(interactive) {
+  if (dshUpdateInFlight) {
+    if (interactive && Notification.isSupported()) {
+      new Notification({ title: APP_TITLE, body: 'dsh 更新正在进行中，请稍候…' }).show();
+    }
+    return;
+  }
+  if (updateCheckInFlight) {
+    // P1-3：交互点击被防重拦截时补提示，不再静默吞掉
+    if (interactive && Notification.isSupported()) {
+      new Notification({ title: APP_TITLE, body: '正在检查更新，请稍候…' }).show();
+    }
+    return;
+  }
+  updateCheckInFlight = true;
+  try {
+    const resolved = resolveDsh();
+    const [latest, current] = await Promise.all([fetchLatestDshVersion(), currentDshVersion(resolved)]);
+    if (!current) {
+      console.log('[dsh-shell] 无法确定当前 dsh 版本（未找到 dsh？）');
+      if (interactive && Notification.isSupported()) {
+        new Notification({ title: APP_TITLE, body: '未检测到 dsh 安装，无法检查更新' }).show();
+      }
+      return;
+    }
+    if (compareSemver(latest, current) > 0) {
+      const bundled = resolved.kind.startsWith('bundled');
+      // P1-2：mac 服务由 launchd 按 plist 硬编码路径拉起（系统 dsh），从不读捆绑/userData
+      // 运行时——mac 上「立即更新」装进 userData 是无效更新且提示误导，一律走 system 式
+      // 弹窗（显示升级命令 + 复制按钮）。mac 端若要捆绑运行时服务，需后续改造
+      // plist/launcher 指向 resources/node-bin + userData 运行时（后置版本）。
+      const oneClick = bundled && !isMac;
+      console.log(`[dsh-shell] 发现 dsh 新版本 ${latest}（当前 ${current}，来源 ${resolved.kind}）`);
+      if (interactive) {
+        const { response } = await dialog.showMessageBox(oneClick ? {
+          type: 'info',
+          title: 'dsh 更新',
+          message: `dsh ${latest} 已发布`,
+          detail: `当前版本 ${current}。一键更新约需 1-3 分钟；更新后需重启 DSH 服务生效。`,
+          buttons: ['立即更新', '稍后'],
+          defaultId: 0,
+          cancelId: 1,
+        } : {
+          type: 'info',
+          title: 'dsh 更新',
+          message: `dsh ${latest} 已发布`,
+          detail: isMac
+            ? `当前版本 ${current}。mac 服务由 launchd 托管（系统 dsh），请在终端手动升级：\n\nnpm i -g @deepseek-ai/dsh@latest`
+            : `当前版本 ${current}。当前 dsh 来自${resolved.kind === 'env' ? ' DSH_BIN 环境变量' : '系统 PATH'}，请在终端手动升级：\n\nnpm i -g @deepseek-ai/dsh@latest`,
+          buttons: ['复制升级命令', '稍后'],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (response === 0) {
+          if (oneClick) updateDsh(latest);
+          else clipboard.writeText('npm i -g @deepseek-ai/dsh@latest');
+        }
+      } else if (Notification.isSupported()) {
+        new Notification({ title: APP_TITLE, body: `dsh 有新版本 ${latest}（当前 ${current}），可从托盘菜单更新` }).show();
+      }
+    } else {
+      console.log(`[dsh-shell] dsh 已是最新（${current}）`);
+      if (interactive && Notification.isSupported()) {
+        new Notification({ title: APP_TITLE, body: `dsh 已是最新版本（${current}）` }).show();
+      }
+    }
+  } catch (err) {
+    console.log('[dsh-shell] 检查 dsh 更新失败:', err.message);
+    if (interactive && Notification.isSupported()) {
+      new Notification({ title: APP_TITLE, body: '检查 dsh 更新失败（网络不可达？），请稍后重试' }).show();
+    }
+  } finally {
+    updateCheckInFlight = false;
+  }
+}
+
+// npm CLI 来源三级：包内捆绑（当前安装包不含，预留——若未来 CI 把 npm 打进 dsh-runtime 则直接用）→
+// userData 缓存 → 从 npmmirror 下载 npm 压缩包现解现用（npm 为纯 JS，用捆绑 node 跑即可）。
+// 版本固定 10.9.x：npm ≥12 要求 node ^22.22.2，捆绑 node v22.20.0 不满足；10.9.4 与 Node 22 同代。
+// 供应链信任边界（P2-4 文档化）：npm CLI tgz 本身无 SRI 校验、下载即解压执行，信任
+// npmmirror HTTPS + 固定版本 + 固定 host；dsh 包本体由 npm 自带 dist.integrity 校验。
+const NPM_CLI_VERSION = '10.9.4';
+const npmCliDir = () => path.join(app.getPath('userData'), 'npm-cli');
+
+async function ensureNpmCli() {
+  const bundledCli = path.join(resourcesRuntimeDir(), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (fs.existsSync(bundledCli)) return bundledCli;
+  const cachedCli = path.join(npmCliDir(), 'package', 'bin', 'npm-cli.js'); // tarball 内顶层目录为 package/
+  if (fs.existsSync(cachedCli)) return cachedCli;
+  const url = `${DSH_REGISTRY}/npm/-/npm-${NPM_CLI_VERSION}.tgz`;
+  console.log('[dsh-shell] 下载 npm CLI:', url);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30000); // 30s 超时（tgz 约 3MB）
+  let res;
+  try { res = await session.defaultSession.fetch(url, { signal: ctrl.signal }); }
+  finally { clearTimeout(t); }
+  if (!res.ok) throw new Error('npm CLI 下载失败 HTTP ' + res.status);
+  const tgz = path.join(app.getPath('temp'), `npm-${NPM_CLI_VERSION}.tgz`);
+  fs.writeFileSync(tgz, Buffer.from(await res.arrayBuffer()));
+  fs.rmSync(npmCliDir(), { recursive: true, force: true });
+  fs.mkdirSync(npmCliDir(), { recursive: true });
+  // mac/linux 用系统 tar；Win10 1803+ 自带 bsdtar（System32\tar.exe，与 CI 准备步骤同款）
+  const tar = isWin ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+  const r = await run(tar, ['-xzf', tgz, '-C', npmCliDir()]);
+  try { fs.unlinkSync(tgz); } catch { /* 忽略 */ }
+  if (r.code !== 0 || !fs.existsSync(cachedCli)) throw new Error('npm CLI 解压失败: ' + r.out.trim().slice(0, 200));
+  return cachedCli;
+}
+
+function logTail(file, n = 5) {
+  try {
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
+    return lines.slice(-n).join(' | ').slice(0, 300) || '（日志为空）';
+  } catch { return '（无日志）'; }
+}
+
+// bundled 分支一键更新：用捆绑 node 跑 npm CLI 把 @deepseek-ai/dsh@latest 装进 userData 运行时。
+// 不自动重启服务——更新完成后弹窗说明，用户托盘点「启动」或重启应用生效。
+let dshUpdateInFlight = false;
+async function updateDsh(latest) {
+  if (dshUpdateInFlight) return;
+  const resolved = resolveDsh();
+  if (isMac || !resolved || !resolved.kind.startsWith('bundled')) return; // 仅非 mac 的 bundled 可一键更新（P1-2：mac 服务走 launchd 系统 dsh，装 userData 无效）
+  dshUpdateInFlight = true;
+  const notify = (body) => { if (Notification.isSupported()) new Notification({ title: APP_TITLE, body }).show(); };
+  const logPath = path.join(logsDir(), 'dsh-update.log');
+  try {
+    notify('dsh 更新中…（约 1-3 分钟）');
+    const npmCli = await ensureNpmCli();
+    const nodeBin = path.join(process.resourcesPath, 'node-bin', isWin ? 'node.exe' : 'node');
+    const target = runtimeDir(); // 更新落 userData 副本（resources 包内目录只读）
+    const args = [npmCli, 'install', '--prefix', target, '@deepseek-ai/dsh@latest',
+      '--no-audit', '--no-fund', `--registry=${DSH_REGISTRY}`];
+    console.log('[dsh-shell] dsh 更新命令:', nodeBin, args.join(' '));
+    const code = await new Promise((resolve) => {
+      const fd = fs.openSync(logPath, 'a');
+      fs.writeSync(fd, `\n===== dsh update ${new Date().toISOString()} → ${latest} =====\n`);
+      // PATH 前置 node-bin：install 生命周期脚本（prebuild-install/node-gyp 等）须用捆绑 node
+      // 执行，与 CI「准备捆绑运行时」步骤同思路
+      const env = { ...process.env, PATH: path.dirname(nodeBin) + path.delimiter + (process.env.PATH || '') };
+      const child = spawn(nodeBin, args, { env, windowsHide: true, stdio: ['ignore', fd, fd] });
+      let done = false;
+      const finish = (c) => { if (done) return; done = true; try { fs.closeSync(fd); } catch { /* 忽略 */ } resolve(c); };
+      child.on('error', (err) => { try { fs.writeSync(fd, 'spawn error: ' + err.message + '\n'); } catch { /* 忽略 */ } finish(-1); });
+      child.on('close', (c) => finish(c ?? -1));
+    });
+    if (code !== 0) throw new Error(`npm install 退出码 ${code}。日志尾部：${logTail(logPath)}`);
+    // 完成后校验：--version 输出抽取版本号与 latest 精确相等（P2-5：子串 includes 会让
+    // 0.12.0 误通过 0.12.0-rc.1；含 pre-release 后缀比较，必须全等）
+    const verify = await run(nodeBin, [dshCliIn(target), '--version']);
+    const got = verify.out.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/);
+    if (!got || got[0] !== latest) {
+      throw new Error(`更新后版本校验失败（期望 ${latest}，实得 ${got ? got[0] : (verify.out.trim().slice(0, 100) || '无输出')}）`);
+    }
+    console.log(`[dsh-shell] dsh 已更新至 ${latest}`);
+    notify(`dsh 已更新至 ${latest}，重启服务后生效`);
+    await dialog.showMessageBox({
+      type: 'info',
+      title: 'dsh 更新完成',
+      message: `dsh 已更新至 ${latest}`,
+      detail: '正在运行的服务仍是旧版本。Deck 不会自动重启服务：请通过托盘「停止 DSH 服务」→「启动 DSH 服务」，或重启应用后生效。',
+      buttons: ['知道了'],
+    });
+  } catch (err) {
+    console.error('[dsh-shell] dsh 更新失败:', err.message);
+    notify('dsh 更新失败：' + String(err.message).slice(0, 180));
+  } finally {
+    dshUpdateInFlight = false;
   }
 }
 
@@ -439,7 +770,8 @@ function buildTrayMenu(running) {
     { label: '在浏览器中打开', click: () => shell.openExternal(WEB_URL) },
     { type: 'separator' },
     loginItemMenuItem(),
-    { label: '检查更新…', click: () => checkForUpdates(true) },
+    { label: '检查 dsh 更新…', click: () => checkDshUpdate(true) },
+    { label: '检查 Deck 更新…', click: () => checkForUpdates(true) },
     { label: '打开日志目录', click: () => shell.openPath(logsDir()) },
     { type: 'separator' },
     { label: '退出', click: () => { isQuitting = true; app.quit(); } },
@@ -524,6 +856,8 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     configurePermissions();
+    // 运行时迁移改延迟执行（P2-2）：whenReady 不再无条件迁移，由 spawnDshChild 在
+    // resolveDsh 落到 bundled-resources 兜底时触发（见 spawnDshChild）。
     createWindow();
     if (!process.env.DSH_SHELL_NO_TRAY) createTray();
     await loadOrStart();

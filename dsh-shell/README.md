@@ -1,7 +1,9 @@
 # dsh-shell — DeepSeek Harness 桌面启动体系（源码仓库）
 
-三平台桌面壳（Windows / macOS / Linux），v0.11.0。与 DSH 更新完全解耦：壳只负责
+三平台桌面壳（Windows / macOS / Linux），v0.12.0。与 DSH 更新完全解耦：壳只负责
 "拉起 `dsh web` 服务 + 提供原生窗口/托盘"，不 import 任何 DSH 包、不读 DSH 内部文件。
+v0.12.0 起支持双更新通道：托盘可检查 dsh 新版本并一键更新（bundled 运行时落 userData 副本），
+Deck 自身新版本可一键下载安装包。
 
 ## 壳形态（现状）
 
@@ -30,8 +32,11 @@
 
 - **Windows / Linux：壳直接 spawn `dsh web` 子进程**
   - dsh 来源三级查找（`resolveDsh()`）：`DSH_BIN` 覆盖 → PATH 系统版（兼容老用户）→
-    安装包捆绑运行时（`resources/node-bin` 官方 Node 22 二进制 + `resources/dsh-runtime`
-    预装的 @deepseek-ai/dsh，bin 入口 `lib/bin.js`，spawn node + CLI 不经 shell）
+    安装包捆绑运行时（`resources/node-bin` 官方 Node 22 二进制 + 预装的 @deepseek-ai/dsh，
+    bin 入口 `lib/bin.js`，spawn node + CLI 不经 shell）。
+    v0.12.0 起捆绑运行时拆两级：首启把 `resources/dsh-runtime` 迁到 `userData/dsh-runtime`
+    （包内 Resources 只读不可写），bundled 分支 userData 副本优先、resources 兜底，
+    dshSource 记为 `bundled-userdata`/`bundled-resources`；node 二进制仍只用 resources 的
   - 壳启动时自动拉起服务，随壳退出自动终止（整棵进程树清理，不留孤儿）：
     Windows 用 `taskkill /pid /T /F`（spawnSync 同步执行），Linux 用负 pid 进程组 SIGTERM
   - 服务 stdout/stderr 追加写入 `userData/logs/dsh-web.log`，排障先看它（托盘有「打开日志目录」）
@@ -74,6 +79,16 @@ npm run dist:linux       # Linux：AppImage + deb
 
 ## 历史
 
+- 2026-08-15（v0.12.0）：双更新通道——①dsh 更新检测（npmmirror registry，8s 超时）+
+  bundled 一键更新：捆绑运行时首启迁 `userData/dsh-runtime`（resolveDsh bundled 拆
+  `bundled-userdata`/`bundled-resources` 两级），用捆绑 node 跑 npm CLI（包内未捆绑 npm，
+  运行时从 npmmirror 下载 npm 10.9.4 解到 userData 缓存）执行
+  `install --prefix userData/dsh-runtime @deepseek-ai/dsh@latest`，完成后 `--version` 校验，
+  不自动重启服务；env/system 分支只给升级命令 + 复制。②Deck 更新引导增强：弹窗新增
+  「下载并安装」→ 按平台拼资产 URL（tag 原文走 `/download/<tag>/`，文件名段不带 v 前缀，
+  已对照实际 Release 资产核实）用 `session.downloadURL` 下载到下载目录，失败保留
+  Releases 备用路径。托盘菜单「检查更新…」改名「检查 Deck 更新…」并新增「检查 dsh 更新…」
+  （详见 `reviews/改造说明-v0.12.0.md`）
 - 2026-08-15（v0.11.0）：P0 免安装——安装包捆绑 Node v22.20.0 官方二进制 + 预装
   @deepseek-ai/dsh（CI 在 electron-builder 前下载/安装，`extraResources` 整体进包）；
   win/linux spawn 改为三级查找（DSH_BIN → PATH 系统版 → 捆绑运行时，捆绑分支 spawn
