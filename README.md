@@ -14,7 +14,7 @@
 
 ## 界面长这样
 
-![DeepSeek Deck 主界面（深色模式）](docs/screenshot.png)
+![DeepSeek Deck 主界面（深色模式）](docs/screenshot-dark.png)
 
 ## 用 Deck 和用浏览器有什么区别？
 
