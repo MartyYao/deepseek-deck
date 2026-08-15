@@ -1,0 +1,13 @@
+node_modules/
+dsh-shell/app/dist/
+deploy/_backup/
+.DS_Store
+*.log
+dsh-shell/app/assets/tray-new.png
+
+# 内部文档/本机专属（不进公开仓库）
+reviews/
+deploy/ai.dsh.web.plist
+deploy/_backup/
+dsh-shell/statusbar/
+build.sh

@@ -1,0 +1,60 @@
+name: build-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # macos-latest 为 arm64 runner；electron-builder 交叉打 x64 包会自动下载对应 electron，无需换 runner
+          # suffix 用于区分 artifact 名（两个 mac 行同为 macos-latest，upload-artifact v4 要求名字唯一）
+          - os: macos-latest
+            args: "--mac --arm64"
+            suffix: macos-arm64
+          - os: macos-latest
+            args: "--mac --x64"
+            suffix: macos-x64
+          - os: ubuntu-latest
+            args: "--linux"
+            suffix: ubuntu
+          - os: windows-latest
+            args: "--win"
+            suffix: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dsh-shell/app/package-lock.json
+      - run: npm ci
+        working-directory: dsh-shell/app
+      - run: npx electron-builder ${{ matrix.args }}
+        working-directory: dsh-shell/app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false" # 无签名证书时跳过 mac 签名
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.suffix }}
+          path: |
+            dsh-shell/app/dist/*.dmg
+            dsh-shell/app/dist/*.zip
+            dsh-shell/app/dist/*.exe
+            dsh-shell/app/dist/*.AppImage
+            dsh-shell/app/dist/*.deb
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "dist-*/*"
+          generate_release_notes: true

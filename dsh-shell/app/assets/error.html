@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>无法连接 DeepSeek Harness</title>
+<style>
+  html,body{height:100%;margin:0;background:#0d1117;color:#e6edf3;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    display:flex;align-items:center;justify-content:center}
+  .wrap{text-align:center;max-width:420px}
+  h1{font-size:18px;margin:0 0 12px}
+  p{color:#8b949e;font-size:13px;line-height:1.6;margin:0 0 20px}
+  code{background:#21262d;padding:1px 6px;border-radius:4px;font-size:12px}
+  button{background:#4d6bfe;color:#fff;border:0;border-radius:8px;
+    padding:10px 22px;font-size:14px;cursor:pointer;margin:0 6px}
+  button:hover{background:#3b55dd}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>无法连接 DeepSeek Harness 服务</h1>
+    <p id="macHint">本地服务（http://127.0.0.1:3080）未就绪。<br>
+    请点击菜单栏海豚图标 →「启动 DSH 服务」，或运行
+    <code>dsh-web-launcher.sh</code> 后重试。</p>
+    <p id="spawnHint" hidden>壳未能启动 <code>dsh web</code> 子进程（Windows / Linux）。<br>
+    请先全局安装 DSH：<code>npm i -g @deepseek-ai/dsh</code>，<br>
+    或设置环境变量 <code>DSH_BIN</code> 指向 dsh 可执行文件后重试。</p>
+    <button onclick="window.dshShell && window.dshShell.retry ? window.dshShell.retry() : location.reload()">重试</button>
+  </div>
+  <script>
+    // 壳在 spawn dsh 失败时以 ?reason=spawn-failed 加载本页：隐藏 mac 引导，显示安装引导
+    if (new URLSearchParams(location.search).get('reason') === 'spawn-failed') {
+      document.getElementById('macHint').hidden = true;
+      document.getElementById('spawnHint').hidden = false;
+    }
+  </script>
+</body>
+</html>

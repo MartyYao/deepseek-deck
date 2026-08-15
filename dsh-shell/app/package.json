@@ -1,0 +1,56 @@
+{
+  "name": "dsh-shell-app",
+  "productName": "DeepSeek Harness",
+  "version": "0.10.0",
+  "description": "DeepSeek Harness 独立桌面壳（Electron），支持 Windows/macOS/Linux：窗口 + 托盘 + 服务控制。与 DSH 更新完全解耦（纯 HTTP 契约）。",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "local.dsh.shell",
+    "productName": "DeepSeek Harness",
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "assets/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Development"
+    }
+  },
+  "allowScripts": {
+    "electron@38.8.6": true
+  }
+}
