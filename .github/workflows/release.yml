@@ -120,7 +120,7 @@ jobs:
           [ -f "$DSH_CLI" ] || { echo "自检失败：缺少 $DSH_CLI"; exit 1; }
           VER="$("$NODE_BIN" "$DSH_CLI" --version 2>&1)" || { echo "自检失败：bin.js --version 执行失败"; exit 1; }
           [ -n "$VER" ] || { echo "自检失败：版本输出为空"; exit 1; }
-          echo "产物自检通过：dsh 版本 $VER（$NODE_BIN）"
+          echo "产物自检通过：dsh 版本 ${VER}（${NODE_BIN}）"
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.suffix }}
