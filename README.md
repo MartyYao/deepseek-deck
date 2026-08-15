@@ -54,6 +54,17 @@
 - **Windows / Linux**：打开应用自动启动服务，关闭应用自动停止，全程不用管
 - 服务日志在应用数据目录的 `logs/dsh-web.log`（托盘菜单可直接打开日志文件夹）
 
+## 轻量，是我们故意的
+
+Deck 定位就是一个**轻量化的桌面壳**：只做壳该做的事——窗口、托盘、服务管理，不往里塞别的东西。
+
+- 不捆绑插件市场、IM 通道、远程控制这类重功能（这些是 Harness 生态的事，需要时在 Harness 里按需配置即可）
+- 与 Harness 通过纯 HTTP 接口通信，不碰它内部任何文件，代码量小、行为可预期
+- 资源占用低：一个窗口 + 一个托盘图标，没有常驻后台服务在壳这一层
+- 安装包即使用户不装 Node 也能跑（内置运行时），但整个应用不臃肿
+
+想要更多能力，Harness 本体就是答案；Deck 只负责把 Harness 舒服地装进桌面。
+
 ## 和官方 DeepSeek Harness 的关系
 
 DeepSeek Harness 的核心能力（AI 引擎、插件系统、网页界面）全部来自官方项目 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)。本项目只负责桌面封装这一层：
