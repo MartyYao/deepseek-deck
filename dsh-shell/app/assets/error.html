@@ -14,6 +14,11 @@
   button{background:#4d6bfe;color:#fff;border:0;border-radius:8px;
     padding:10px 22px;font-size:14px;cursor:pointer;margin:0 6px}
   button:hover{background:#3b55dd}
+  @media (prefers-color-scheme:light){
+    html,body{background:#f6f8fa;color:#1f2328}
+    p{color:#57606a}
+    code{background:#eaeef2}
+  }
 </style>
 </head>
 <body>
@@ -23,8 +28,8 @@
     请点击菜单栏海豚图标 →「启动 DSH 服务」，或运行
     <code>dsh-web-launcher.sh</code> 后重试。</p>
     <p id="spawnHint" hidden>壳未能启动 <code>dsh web</code> 子进程（Windows / Linux）。<br>
-    请先全局安装 DSH：<code>npm i -g @deepseek-ai/dsh</code>，<br>
-    或设置环境变量 <code>DSH_BIN</code> 指向 dsh 可执行文件后重试。</p>
+    请检查安装包完整性（内置运行时缺失）：重新下载并安装最新版安装包；<br>
+    仍不行则安装 Node.js 与 dsh（<code>npm i -g @deepseek-ai/dsh</code>）后重试。</p>
     <button onclick="window.dshShell && window.dshShell.retry ? window.dshShell.retry() : location.reload()">重试</button>
   </div>
   <script>

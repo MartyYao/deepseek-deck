@@ -1,5 +1,8 @@
 node_modules/
 dsh-shell/app/dist/
+# 捆绑运行时：node 二进制与 node_modules 不入库；dsh-runtime 的 package.json/lock 入库锁版本（npm ci）
+dsh-shell/app/resources/node-bin/
+dsh-shell/app/resources/dsh-runtime/node_modules/
 deploy/_backup/
 .DS_Store
 *.log

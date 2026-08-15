@@ -15,18 +15,23 @@ jobs:
         include:
           # macos-latest 为 arm64 runner；electron-builder 交叉打 x64 包会自动下载对应 electron，无需换 runner
           # suffix 用于区分 artifact 名（两个 mac 行同为 macos-latest，upload-artifact v4 要求名字唯一）
+          # node_dist 必须与产物架构一致（mac x64 在 arm64 runner 上交叉打包，捆绑的 node 仍取 x64）
           - os: macos-latest
             args: "--mac --arm64"
             suffix: macos-arm64
+            node_dist: darwin-arm64
           - os: macos-latest
             args: "--mac --x64"
             suffix: macos-x64
+            node_dist: darwin-x64
           - os: ubuntu-latest
             args: "--linux"
             suffix: ubuntu
+            node_dist: linux-x64
           - os: windows-latest
             args: "--win"
             suffix: windows
+            node_dist: win-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -37,10 +42,84 @@ jobs:
           cache-dependency-path: dsh-shell/app/package-lock.json
       - run: npm ci
         working-directory: dsh-shell/app
+      # P0 免安装：下载 Node 22 官方二进制 + 用其自带 npm 预装 dsh，经 extraResources 整体进安装包。
+      # 原生模块（node-pty/koffi/better-sqlite3/sharp）按标准 Node ABI 编译，与 Electron 内核解耦。
+      - name: 准备捆绑运行时（Node + dsh）
+        shell: bash # windows runner 默认 pwsh，统一 bash 便于三平台共用一套脚本
+        working-directory: dsh-shell/app
+        env:
+          # npmmirror latest-v22.x 实查（2026-08-15）= v22.20.0，与 setup-node 的 22 同一大版本；
+          # 升级时先查 https://registry.npmmirror.com/-/binary/node/latest-v22.x/
+          NODE_VER: v22.20.0
+          NODE_DIST: ${{ matrix.node_dist }}
+        run: |
+          set -euo pipefail
+          # 统一走 npmmirror：国内/海外 runner 均可达，避免 nodejs.org 在部分网络下的抖动
+          BASE="https://npmmirror.com/mirrors/node/${NODE_VER}"
+          DL="$PWD/.node-dl"
+          mkdir -p "$DL" resources/node-bin
+          if [ "$NODE_DIST" = "win-x64" ]; then
+            curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$BASE/node-${NODE_VER}-win-x64.zip" -o "$DL/node.zip"
+            # Git Bash 默认不带 unzip：改用 PowerShell Expand-Archive（Windows runner 自带）
+            powershell -NoProfile -Command "Expand-Archive -LiteralPath '$DL/node.zip' -DestinationPath '$DL' -Force"
+            NDIR="$DL/node-${NODE_VER}-win-x64"
+            cp "$NDIR/node.exe" resources/node-bin/node.exe
+            NPM_CLI="$NDIR/node_modules/npm/bin/npm-cli.js"
+            NODE_EXE="$NDIR/node.exe"
+            export PATH="$NDIR:$PATH"
+          else
+            curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$BASE/node-${NODE_VER}-${NODE_DIST}.tar.gz" -o "$DL/node.tar.gz"
+            tar -xzf "$DL/node.tar.gz" -C "$DL"
+            NDIR="$DL/node-${NODE_VER}-${NODE_DIST}"
+            cp "$NDIR/bin/node" resources/node-bin/node
+            NPM_CLI="$NDIR/lib/node_modules/npm/bin/npm-cli.js"
+            NODE_EXE="$NDIR/bin/node"
+            export PATH="$NDIR/bin:$PATH"
+          fi
+          # mac x64 产物在 arm64 runner 上构建：x64 node 需 Rosetta 才能执行（GitHub arm64 镜像自带，此处兜底）
+          if [ "$NODE_DIST" = "darwin-x64" ] && [ "$(uname -m)" = "arm64" ]; then
+            sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
+          fi
+          # 关键：用目标平台 node 跑其自带 npm（而非 setup-node 的 runner 版），
+          # 保证 sharp/better-sqlite3 等按目标架构取 prebuild、install 脚本由目标 node 执行
+          # dsh 版本锁定：resources/dsh-runtime/package.json + package-lock.json 均已入库，
+          # CI 只跑 npm ci（不解析 latest），保证构建可复现、无供应链漂移。
+          # 升级 dsh 流程：本地改 resources/dsh-runtime/package.json 版本号 →
+          # npm install --prefix resources/dsh-runtime 重新生成 lockfile → 两者一并提交。
+          "$NODE_EXE" "$NPM_CLI" ci --prefix resources/dsh-runtime
+          # 验证捆绑入口可执行（bin 入口 = lib/bin.js，经 npm view @deepseek-ai/dsh bin 确认）
+          if [ "$NODE_DIST" = "win-x64" ]; then NODE_BIN=resources/node-bin/node.exe; else NODE_BIN=resources/node-bin/node; fi
+          "$NODE_BIN" resources/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js --version
+          rm -rf "$DL"
       - run: npx electron-builder ${{ matrix.args }}
         working-directory: dsh-shell/app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # 无签名证书时跳过 mac 签名
+      # 产物自检：afterPack 资源落位从未经真实构建验证，缺运行时即 fail-fast
+      - name: 产物自检（捆绑运行时落位 + 可执行验证）
+        shell: bash # 三平台统一 bash；windows runner 默认 pwsh，显式指定
+        working-directory: dsh-shell/app
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # mac 输出目录带 arch 后缀（dist/mac-arm64 等），用 find 定位 .app
+            APP_DIR="$(find dist -maxdepth 2 -type d -name 'DeepSeek Harness.app' | head -n1)"
+            [ -n "$APP_DIR" ] || { echo "自检失败：未找到 .app 产物"; exit 1; }
+            RES="$APP_DIR/Contents/Resources"
+            NODE_BIN="$RES/node-bin/node"
+          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
+            RES="dist/win-unpacked/resources"
+            NODE_BIN="$RES/node-bin/node.exe"
+          else
+            RES="dist/linux-unpacked/resources"
+            NODE_BIN="$RES/node-bin/node"
+          fi
+          DSH_CLI="$RES/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js"
+          [ -f "$NODE_BIN" ] || { echo "自检失败：缺少 $NODE_BIN"; exit 1; }
+          [ -f "$DSH_CLI" ] || { echo "自检失败：缺少 $DSH_CLI"; exit 1; }
+          VER="$("$NODE_BIN" "$DSH_CLI" --version 2>&1)" || { echo "自检失败：bin.js --version 执行失败"; exit 1; }
+          [ -n "$VER" ] || { echo "自检失败：版本输出为空"; exit 1; }
+          echo "产物自检通过：dsh 版本 $VER（$NODE_BIN）"
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.suffix }}
