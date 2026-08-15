@@ -60,8 +60,9 @@ jobs:
           mkdir -p "$DL" resources/node-bin
           if [ "$NODE_DIST" = "win-x64" ]; then
             curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$BASE/node-${NODE_VER}-win-x64.zip" -o "$DL/node.zip"
-            # Git Bash 默认不带 unzip：改用 PowerShell Expand-Archive（Windows runner 自带）
-            powershell -NoProfile -Command "Expand-Archive -LiteralPath '$DL/node.zip' -DestinationPath '$DL' -Force"
+            # Git Bash 无 unzip、PowerShell Expand-Archive 在 runner 上报 ArchiveCmdletPathNotFound：
+            # 用 Windows 自带 bsdtar（System32/tar.exe，Win10 1803+ 内置，支持 zip）
+            /c/Windows/System32/tar.exe -xf "$DL/node.zip" -C "$DL"
             NDIR="$DL/node-${NODE_VER}-win-x64"
             cp "$NDIR/node.exe" resources/node-bin/node.exe
             NPM_CLI="$NDIR/node_modules/npm/bin/npm-cli.js"
