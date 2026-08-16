@@ -1,0 +1,143 @@
+/* settings.css — 外观设置页独立样式（不依赖 DSH）。深色系为主，prefers-color-scheme 适配浅色。
+   注意：不要在这里设置 color-scheme 属性——preload 的主题观察器会读 <html> 的
+   color-scheme 并同步 nativeTheme，设置页不应干扰主窗口主题同步。 */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: #1b1b1f;
+  color: #e6e6e6;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  padding: 20px 22px 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+h1 { font-size: 17px; margin: 0 0 14px; font-weight: 600; }
+h2 { font-size: 13px; margin: 0; font-weight: 600; }
+
+section {
+  background: #232327;
+  border: 1px solid #333338;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #6e8bff;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.link-btn:hover { text-decoration: underline; }
+
+/* 预设色卡 */
+.preset-list {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  font-size: 11px;
+}
+.preset-card:hover { background: #2b2b31; }
+.preset-card.selected { border-color: #6e8bff; }
+.preset-card .swatch {
+  width: 100%;
+  height: 28px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* 自定义取色行 */
+.custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.custom-row:hover { background: #2b2b31; }
+.custom-row.selected { border-color: #6e8bff; }
+.custom-row input[type="color"] {
+  width: 36px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+/* 跟随选项的占位圆点：与取色器同尺寸，表示「随背景整板」 */
+.swatch-dot {
+  width: 36px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+}
+
+/* 字号滑块 */
+.font-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.font-row input[type="range"] { flex: 1; accent-color: #6e8bff; }
+.font-val { min-width: 42px; text-align: right; color: #9a9aa2; }
+
+footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
+}
+.hint { color: #7a7a82; font-size: 11px; }
+#close-btn {
+  background: #3a3a41;
+  color: #e6e6e6;
+  border: 1px solid #4a4a52;
+  border-radius: 7px;
+  padding: 6px 18px;
+  font-size: 12px;
+  cursor: pointer;
+}
+#close-btn:hover { background: #46464e; }
+
+@media (prefers-color-scheme: light) {
+  body { background: #f5f5f7; color: #1f2328; }
+  section { background: #ffffff; border-color: #e0e0e4; }
+  .preset-card:hover, .custom-row:hover { background: #f0f0f3; }
+  .preset-card .swatch { border-color: rgba(0, 0, 0, 0.1); }
+  .custom-row input[type="color"] { border-color: rgba(0, 0, 0, 0.15); }
+  .swatch-dot { border-color: rgba(0, 0, 0, 0.25); }
+  .font-val { color: #6a6a72; }
+  .hint { color: #8a8a92; }
+  .link-btn { color: #4059c9; }
+  #close-btn { background: #e8e8ec; color: #1f2328; border-color: #d0d0d6; }
+  #close-btn:hover { background: #dcdce2; }
+}

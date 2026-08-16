@@ -1,7 +1,7 @@
 {
   "name": "dsh-shell-app",
   "productName": "DeepSeek Harness",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "DeepSeek Harness 独立桌面壳（Electron，Windows/macOS/Linux）：窗口 + 托盘 + 服务控制。与 DSH 更新完全解耦（纯 HTTP 契约）。",
   "author": "Marty Yao <martyyao@users.noreply.github.com>",
   "homepage": "https://github.com/MartyYao/deepseek-harness-deck",

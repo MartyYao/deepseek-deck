@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<title>外观设置</title>
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <h1>外观设置</h1>
+
+  <section>
+    <div class="sec-head">
+      <h2>背景配色</h2>
+      <button id="bg-reset" class="link-btn" type="button">恢复默认</button>
+    </div>
+    <div id="preset-list" class="preset-list"><!-- 预设色卡由 settings.js 渲染 --></div>
+    <div class="custom-row" id="bg-custom-row">
+      <input type="color" id="bg-custom" value="#0d1b2a">
+      <span>自定义背景色</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>左侧边栏背景</h2>
+      <button id="sidebar-reset" class="link-btn" type="button">恢复默认</button>
+    </div>
+    <div class="custom-row" id="sidebar-follow-row">
+      <span class="swatch-dot"></span>
+      <span>跟随背景</span>
+    </div>
+    <div class="custom-row" id="sidebar-custom-row">
+      <input type="color" id="sidebar-custom" value="#1c1c1e">
+      <span>自定义侧边栏色</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>消息气泡背景</h2>
+      <button id="bubble-reset" class="link-btn" type="button">恢复默认</button>
+    </div>
+    <div class="custom-row" id="bubble-follow-row">
+      <span class="swatch-dot"></span>
+      <span>跟随背景</span>
+    </div>
+    <div class="custom-row" id="bubble-custom-row">
+      <input type="color" id="bubble-custom" value="#e8ecf4">
+      <span>自定义气泡色</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>字体颜色</h2>
+      <button id="label-reset" class="link-btn" type="button">恢复默认</button>
+    </div>
+    <div class="custom-row" id="label-custom-row">
+      <input type="color" id="label-custom" value="#e6e6e6">
+      <span>自定义字体颜色</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>字号</h2>
+      <button id="font-reset" class="link-btn" type="button">恢复默认</button>
+    </div>
+    <div class="font-row">
+      <input type="range" id="font-size" min="90" max="130" step="5" value="100">
+      <span id="font-size-val" class="font-val">100%</span>
+    </div>
+  </section>
+
+  <footer>
+    <span class="hint">改动即时生效并自动保存</span>
+    <button id="close-btn" type="button">关闭</button>
+  </footer>
+
+  <script src="settings.js"></script>
+</body>
+</html>

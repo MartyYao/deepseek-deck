@@ -1,6 +1,8 @@
 // dsh-shell app — Electron 主进程（v0.12.0, 2026-08-15；三平台 + 双更新通道版）
 // v0.12.0：dsh 更新检测 + 一键更新（bundled 运行时首启迁 userData，包内 Resources 只读不可写）；
 //         Deck 更新引导增强（弹窗「下载并安装」→ 下载对应平台安装包，方案 A 不引入 electron-updater）。
+// 未发版累积（2026-08-16）：外观设置 v2——整板换肤（覆盖 --dsw-static-neutral-bluish-* 19 级）、
+//         字号改 Chromium zoom、标题栏联动 nativeTheme、DSH_SHELL_DEBUG 调试端口。
 // 独立桌面壳（Windows / macOS / Linux）：加载 http://127.0.0.1:3080 的 dsh web。
 // 服务托管按平台分支：
 //   - macOS：launchd 托管（TCC 红线：责任进程 = node 二进制，壳只发 launchctl 命令，
@@ -11,7 +13,7 @@
 //     （resources/node-bin/node + resources/dsh-runtime 内预装的 @deepseek-ai/dsh，免安装）。
 // 与 DSH 更新解耦：壳只依赖稳定 HTTP 表面（web UI + /api），不 import 任何 DSH 包。
 
-import { app, BrowserWindow, Tray, Menu, shell, session, dialog, clipboard, Notification, ipcMain, nativeImage, screen } from 'electron';
+import { app, BrowserWindow, Tray, Menu, shell, session, dialog, clipboard, Notification, ipcMain, nativeImage, nativeTheme, screen } from 'electron';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -41,6 +43,12 @@ const DSH_REGISTRY = 'https://registry.npmmirror.com';
 const DSH_LATEST_URL = `${DSH_REGISTRY}/@deepseek-ai/dsh/latest`;
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 const ASSETS = (name) => path.join(__dirname, 'assets', name);
+
+// 调试端口（仅调试用，README 不宣传）：DSH_SHELL_DEBUG=1 启动时开启 Chromium 远程调试
+// （http://127.0.0.1:9222），用于获取实机 DOM 类名——DSH 前端为 CSS modules 哈希类名，
+// 下一步侧边栏/气泡独立调节需锁定当前 dsh 版本实测类名。
+// 安全影响：开启后本机任意进程可连接调试端口读取/操控页面——仅限本机、仅调试期使用。
+if (process.env.DSH_SHELL_DEBUG) app.commandLine.appendSwitch('remote-debugging-port', '9222');
 
 let mainWindow = null;
 let tray = null;
@@ -255,6 +263,298 @@ async function waitForServer(timeoutMs = 60000) {
   return false;
 }
 
+// ── 外观设置（背景配色 / 字体颜色 / 字号）─────────────────────────────────
+// 方案：壳注入 CSS 覆盖 DSH 语义变量（webContents.insertCSS，不受 CSP 限制，不碰 dsh）。
+// 存储：userData/settings.json（无则默认 {}，读失败按空处理）。
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// 预设配色表（深色基调，与官方深色主题协调；单源——设置页经 settings-get 的返回拿到此表）。
+// v2 起预设只存 base 主色，整板 19 级由 generatePalette 实时生成；预设只管背景，文字色独立设置。
+const APPEARANCE_PRESETS = {
+  deepblue: { label: '深空蓝', base: '#0d1b2a' },
+  forest: { label: '墨绿', base: '#0f1f17' },
+  warmbrown: { label: '暖棕', base: '#1f1712' },
+  violet: { label: '紫罗兰', base: '#17122b' },
+  graphite: { label: '石墨', base: '#1c1c1e' },
+};
+
+// ── 整板生成（纯 JS 无依赖）：base 主色 → --dsw-static-neutral-bluish-* 全 19 级 ──
+// DSH 组件大量直接引用 static 色板（100+ 处），只覆盖 alias（15 处）换肤不生效，必须整板覆盖。
+// 亮度模板取官方灰阶每级亮度；500 为锚点（= base 亮度），浅色端线性升到 97%、深色端线性降到 6%。
+function hexToHsl(hex) {
+  const m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(hex || '');
+  if (!m) return null;
+  const r = parseInt(m[1], 16) / 255, g = parseInt(m[2], 16) / 255, b = parseInt(m[3], 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  const d = max - min;
+  if (d > 0) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const to = (v) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return '#' + to(r) + to(g) + to(b);
+}
+
+const PALETTE_LEVELS = [
+  ['00', 97], ['50', 95], ['60', 93], ['75', 91], ['100', 89], ['150', 87],
+  ['200', 84], ['300', 78], ['400', 66], ['500', 58], ['600', 48], ['700', 37],
+  ['750', 26], ['800', 20], ['850', 16], ['875', 13], ['900', 10], ['950', 8], ['1000', 5],
+];
+
+// 非法输入回退：返回 null（调用方不注入）。base 亮度钳制到 [8,95]，保证两端斜坡单调。
+function generatePalette(baseHex) {
+  const hsl = hexToHsl(baseHex);
+  if (!hsl) return null;
+  const baseL = Math.min(95, Math.max(8, hsl.l));
+  const out = {};
+  for (const [level, t] of PALETTE_LEVELS) {
+    let l;
+    if (t > 58) l = baseL + (97 - baseL) * ((t - 58) / 39);   // 浅色端：升到 97%
+    else if (t < 58) l = 6 + (baseL - 6) * ((t - 5) / 53);    // 深色端：降到 6%
+    else l = baseL;                                           // 500 锚点 = base 亮度
+    // 色相保持；两端微降饱和（最多 -12%）防艳，中段保持 base 饱和
+    const satScale = 1 - 0.12 * Math.min(1, Math.abs(t - 58) / 53);
+    out[level] = hslToHex(hsl.h, hsl.s * satScale, l);
+  }
+  return out;
+}
+
+function readSettings() {
+  try {
+    const s = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+    return s && typeof s === 'object' ? s : {};
+  } catch { return {}; } // 文件不存在/损坏均按空设置处理
+}
+
+// 原子写：tmp + rename，防中途崩溃留半截 JSON
+function writeSettings(patch) {
+  const next = { ...readSettings(), ...patch };
+  const file = settingsFile();
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+  fs.renameSync(tmp, file);
+  return next;
+}
+
+// 由设置生成注入 CSS。v2 整板换肤：覆盖 --dsw-static-neutral-bluish-* 全 19 级，
+// 选择器 `body, body[data-ds-dark-theme]`——深色主题变量定义在 body[data-ds-dark-theme]
+// （特异性 0,1,1），单 body 选择器在深色下被打败，必须两套都覆盖，全部 !important。
+// 注：注入固定值会同时覆盖官方深浅两套变量（用户自定义外观即固定），属预期行为；
+// DSH 升级后若变量名变化，注入的自定义属性无人引用即自然失效，不报错。
+function generateAppearanceCss(settings) {
+  const a = settings && settings.appearance;
+  if (!a || typeof a !== 'object') return '';
+  const rules = [];
+  const SEL = 'body, body[data-ds-dark-theme]';
+  // 背景：preset/custom 都由 base 色生成整板；default 不生成（恢复默认 = 不注入）
+  let palette = null;
+  if (a.bg && a.bg.mode === 'preset' && APPEARANCE_PRESETS[a.bg.preset]) {
+    palette = generatePalette(APPEARANCE_PRESETS[a.bg.preset].base);
+  } else if (a.bg && a.bg.mode === 'custom' && COLOR_RE.test(a.bg.custom || '')) {
+    palette = generatePalette(a.bg.custom);
+  }
+  if (palette) {
+    const decl = PALETTE_LEVELS.map(([level]) => `--dsw-static-neutral-bluish-${level}:${palette[level]} !important`).join(';');
+    rules.push(`${SEL}{${decl}}`);
+    // alias 分主题映射（v3 修复：浅色 base 时深色端映射导致深底深字）。深色主题页取
+    // 深色端（官方映射：bg-base=950、layer-1=875、layer-2=850、layer-3=800），
+    // 浅色主题页取浅色端（00/50/60/75），保证经 alias 取色的组件与整板一致
+    rules.push(`body[data-ds-dark-theme]{--dsw-alias-bg-base:${palette['950']} !important;--dsw-alias-bg-layer-1:${palette['875']} !important;--dsw-alias-bg-layer-2:${palette['850']} !important;--dsw-alias-bg-layer-3:${palette['800']} !important}`);
+    rules.push(`body:not([data-ds-dark-theme]){--dsw-alias-bg-base:${palette['00']} !important;--dsw-alias-bg-layer-1:${palette['50']} !important;--dsw-alias-bg-layer-2:${palette['60']} !important;--dsw-alias-bg-layer-3:${palette['75']} !important}`);
+  }
+  // 文字：custom 时 primary 自定义，dimmed/caption 用 color-mix 派生；default 不生成
+  if (a.label && a.label.mode === 'custom' && COLOR_RE.test(a.label.custom || '')) {
+    const c = a.label.custom;
+    rules.push(`body{--dsw-alias-label-primary:${c} !important;--dsw-alias-label-dimmed:color-mix(in srgb,${c} 70%,transparent) !important;--dsw-alias-label-caption:color-mix(in srgb,${c} 55%,transparent) !important}`);
+  }
+  // 侧边栏独立背景：custom 时叠加覆盖（侧边栏已随整板变色，此为独立调节）。
+  // 锁 dsh 0.1.0-rc.6：侧边栏容器为 CSS modules 哈希类名（实测 `pI_x6G_sidebarCol`），
+  // 用后缀匹配 [class$="_sidebarCol"] 防前缀随机变化；DSH 前端升级需重新适配。
+  if (a.sidebar && a.sidebar.mode === 'custom' && COLOR_RE.test(a.sidebar.custom || '')) {
+    rules.push(`[class$="_sidebarCol"]{background-color:${a.sidebar.custom} !important}`);
+  }
+  // 消息气泡独立调节（v3.1）：气泡背景不走 neutral-bluish 整板（官方为品牌蓝
+  // rgb(237,243,254)，整板覆盖不到），浅底近白字看不清，需单独覆盖。
+  // 锁 dsh 0.1.0-rc.6：气泡为 CSS modules 哈希类名（实测 `gdEzaW_bubble`），后缀匹配
+  // [class$="_bubble"] 防前缀随机变化；DSH 前端升级需重新适配。
+  if (a.bubble && a.bubble.mode === 'follow') {
+    // 气泡随主题色系：背景取 alias layer-1（深浅主题各取对应端），文字随主题
+    rules.push(`[class$="_bubble"]{background-color:var(--dsw-alias-bg-layer-1) !important;color:var(--dsw-alias-label-primary) !important}`);
+  } else if (a.bubble && a.bubble.mode === 'custom' && COLOR_RE.test(a.bubble.custom || '')) {
+    // 自定义色 + 文字自动对比度：背景亮度 < 50% → 白字，≥50% → 深字
+    const hsl = hexToHsl(a.bubble.custom);
+    const txt = hsl && hsl.l < 50 ? '#f5f5f5' : '#1c1c1e';
+    rules.push(`[class$="_bubble"]{background-color:${a.bubble.custom} !important;color:${txt} !important}`);
+  }
+  // default：不生成气泡规则（官方原样）
+  // 字号缩放走 applyAppearanceCss 的 preload 通道（ipc send → preload 内联
+  // body.style.zoom）——insertCSS（Blink inspector 样式表）对非标准属性 zoom 无效，
+  // 故此处不再生成 zoom 规则
+  return rules.join('\n');
+}
+
+// 标题栏联动判定：外观背景为深色系 → 'dark'，浅色系 → 'light'，无外观背景设置 → null
+// （交还 system / 页面上报）。预设均为深色系；custom 按 base 亮度 < 50% 判深。
+function appearanceTheme(settings) {
+  const a = settings && settings.appearance;
+  if (!a || !a.bg || typeof a.bg !== 'object') return null;
+  if (a.bg.mode === 'preset' && APPEARANCE_PRESETS[a.bg.preset]) return 'dark';
+  if (a.bg.mode === 'custom' && COLOR_RE.test(a.bg.custom || '')) {
+    const hsl = hexToHsl(a.bg.custom);
+    return hsl && hsl.l < 50 ? 'dark' : 'light';
+  }
+  return null;
+}
+
+// 注入管理：记录上次 insertCSS 返回的 key，重注入前先 removeInsertedCSS。
+// 坑（2026-08-16 实测）：Electron insertCSS 的样式在作者样式表最前（优先级最低），
+// 同选择器规则会被页面样式覆盖——变量规则必须 !important 才能生效。
+// insertedCSS 随页面导航清除，故 did-finish-load 后需重注入。仅对主窗口的 DSH 页面
+// 注入（loading/error 本地页不注入），设置窗口不注入。
+let appearanceCssKey = null;
+// 是否曾对页面强制过主题/zoom（preload 通道是发送即忘，无法像 insertCSS 一样按键移除，
+// 恢复默认时需以清除负载收尾；纯默认用户不发送，避免剥掉页面自身主题）
+let appearanceJsForced = false;
+async function applyAppearanceCss(win) {
+  if (!win || win.isDestroyed()) return;
+  const wc = win.webContents;
+  if (appearanceCssKey) {
+    try { await wc.removeInsertedCSS(appearanceCssKey); } catch { /* 页面已导航旧 key 失效，忽略 */ }
+    appearanceCssKey = null;
+  }
+  const settings = readSettings();
+  // 标题栏联动：外观背景决定 nativeTheme.themeSource（mac 标题栏 + loading/error 页的
+  // prefers-color-scheme 同步）；无外观背景 → 'system'，交还页面 color-scheme 上报
+  // （preload 观察器继续工作）。优先级：外观设置存在时以外观决定（theme IPC 侧有守卫）。
+  const theme = appearanceTheme(settings);
+  // 标题栏（nativeTheme）完全跟随页面实际 colorScheme（preload 观察器上报）：
+  // 外观设置只强制页面 data-ds-dark-theme/colorScheme（下方 preload 通道），页面
+  // colorScheme 变化即触发上报 → 标题栏/窗口背景跟随页面——页面深色标题栏必深色，
+  // 用户手动切页面主题也实时跟随（2026-08-16：移除外观锁死 themeSource 的设计，
+  // 原设计导致页面深色时标题栏仍浅色）。
+  if (!wc.getURL().startsWith(WEB_ORIGIN)) return;
+  // 主题强制 + zoom 内联（v3.1 改 preload 通道）：insertCSS（Blink inspector 样式表）
+  // 对非标准属性 zoom 无效，zoom 必须内联 body.style.zoom；executeJavaScript 在
+  // did-finish-load 后立即执行时机不可靠（页面 JS 初始化期间执行上下文被销毁，
+  // "Execution context was destroyed" 异常被吞掉后无重试，zoom 没设上——2026-08-16
+  // CDP 实测定位）。改经 webContents.send 发 preload 通道：preload 在页面上下文运行，
+  // 收到后等 document.body 就绪再执行，无 context 问题。主题也一并强制——外观激活时
+  // 令页面主题与外观一致（深色 base → data-ds-dark-theme，浅色 → 移除），恢复默认
+  // （无外观背景）时清除。均为一次性强制：页面 JS 后续手动切主题以页面为准，不拦截。
+  // 注：colorScheme 置 '' 时 preload 观察器读不到值静默不发，页面随后自报主题恢复同步。
+  const pct = Number(settings && settings.appearance && settings.appearance.fontSize);
+  const zoom = Number.isFinite(pct) && pct !== 100 ? Math.round(pct) : null;
+  const needForce = theme !== null || zoom !== null;
+  // 纯默认用户（从未设置外观）不动页面属性——否则每次 did-finish-load 都会剥掉
+  // 页面自己的 data-ds-dark-theme；仅在外观激活或之前强制过（恢复默认需清除）时发送
+  if (needForce || appearanceJsForced) {
+    wc.send('dsh-shell:appearance-js', { theme, zoom });
+    appearanceJsForced = needForce;
+  }
+  const css = generateAppearanceCss(settings);
+  if (!css) return;
+  try { appearanceCssKey = await wc.insertCSS(css); } catch { /* 注入失败不影响页面 */ }
+}
+
+// 设置窗口（单例：已开则 focus；关闭即销毁）
+let settingsWindow = null;
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    title: '外观设置',
+    width: 480,
+    height: 620,
+    minWidth: 420,
+    minHeight: 560,
+    show: false,
+    autoHideMenuBar: true,
+    icon: ASSETS(isMac ? 'icon.icns' : (isWin ? 'icon.ico' : 'icon.png')),
+    webPreferences: { // 同主窗口安全基线；设置页经 dshShell bridge 走 settings IPC
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  settingsWindow.loadFile(ASSETS('settings.html'));
+  settingsWindow.once('ready-to-show', () => { if (settingsWindow) settingsWindow.show(); });
+  settingsWindow.on('closed', () => { settingsWindow = null; });
+  settingsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // 导航守卫沿用主窗口策略：本地 file:// 放行，其余一律拦截
+  settingsWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file:')) e.preventDefault();
+  });
+}
+
+// settings-set 的 patch 白名单校验：只接受 appearance 下已知字段；颜色严格正则、
+// preset 名枚举校验、fontSize 数字钳制 90-130——注入 CSS 的内容来自设置，必须防注入。
+function sanitizeAppearance(input) {
+  if (!input || typeof input !== 'object') return null;
+  const out = {};
+  if (input.bg && typeof input.bg === 'object') {
+    const bg = input.bg;
+    out.bg = {
+      mode: ['preset', 'custom', 'default'].includes(bg.mode) ? bg.mode : 'default',
+      preset: typeof bg.preset === 'string' && APPEARANCE_PRESETS[bg.preset] ? bg.preset : 'deepblue',
+      custom: COLOR_RE.test(bg.custom || '') ? bg.custom : '#0d1b2a',
+    };
+  }
+  if (input.label && typeof input.label === 'object') {
+    const label = input.label;
+    out.label = {
+      mode: label.mode === 'custom' ? 'custom' : 'default',
+      custom: COLOR_RE.test(label.custom || '') ? label.custom : '#e6e6e6',
+    };
+  }
+  if (input.sidebar && typeof input.sidebar === 'object') {
+    const sidebar = input.sidebar;
+    out.sidebar = {
+      // follow=跟随背景整板（默认）；custom=独立色；default=官方原样
+      mode: ['follow', 'custom', 'default'].includes(sidebar.mode) ? sidebar.mode : 'follow',
+      custom: COLOR_RE.test(sidebar.custom || '') ? sidebar.custom : '#1c1c1e',
+    };
+  }
+  if (input.bubble && typeof input.bubble === 'object') {
+    const bubble = input.bubble;
+    out.bubble = {
+      // follow=气泡随主题色系（默认）；custom=独立色+自动对比度文字；default=官方原样
+      mode: ['follow', 'custom', 'default'].includes(bubble.mode) ? bubble.mode : 'follow',
+      custom: COLOR_RE.test(bubble.custom || '') ? bubble.custom : '#e8ecf4',
+    };
+  }
+  if (input.fontSize !== undefined) {
+    const n = Number(input.fontSize);
+    if (Number.isFinite(n)) out.fontSize = Math.min(130, Math.max(90, Math.round(n)));
+  }
+  return out;
+}
+
 // ── 窗口 ──────────────────────────────────────────────────────────────────
 function persistBounds() {
   if (!mainWindow) return;
@@ -344,7 +644,10 @@ function createWindow() {
       mainWindow.loadFile(ASSETS('error.html'));
     }
   });
-  mainWindow.webContents.on('did-finish-load', () => { loadFailures = 0; });
+  mainWindow.webContents.on('did-finish-load', () => {
+    loadFailures = 0;
+    applyAppearanceCss(mainWindow); // insertedCSS 随导航清除，每次加载完成需重注入
+  });
 
   return mainWindow;
 }
@@ -764,6 +1067,7 @@ function buildTrayMenu(running) {
     { label: `DeepSeek Deck v${app.getVersion()}（服务：${running ? '运行中' : '已停止'}）`, enabled: false },
     { type: 'separator' },
     { label: '显示 / 隐藏窗口', click: toggleWindow },
+    { label: '外观设置…', click: openSettingsWindow },
     { type: 'separator' },
     { label: '启动 DSH 服务', click: async () => { await startService(); await refreshTrayStatus(); } },
     { label: '停止 DSH 服务', click: async () => { await stopService(); await refreshTrayStatus(); } },
@@ -786,7 +1090,9 @@ function createTray() {
   tray.setContextMenu(buildTrayMenu(false)); // 初始菜单；refreshTrayStatus 探测后按真实状态重建
   refreshTrayStatus();
   setInterval(refreshTrayStatus, 3000);
-  tray.on('click', toggleWindow);
+  // macOS：不绑 click（左键点击默认弹出菜单，原生 NSStatusBar 行为）；
+  // win/linux：左键 toggle 窗口、右键菜单（平台惯例）。
+  if (!isMac) tray.on('click', toggleWindow);
 }
 
 // P2-5：防重入（端口探测可能卡住导致并发轮询）
@@ -891,4 +1197,36 @@ ipcMain.on('dsh-shell:retry', (event) => {
   if (!isTrustedSender(event)) return;
   loadFailures = 0;
   loadOrStart();
+});
+// 外观设置 IPC（设置页专用；均经 isTrustedSender 校验）
+ipcMain.handle('dsh-shell:settings-get', (event) => {
+  if (!isTrustedSender(event)) return null;
+  // 预设表单源在 main.js，随返回带给设置页渲染色卡
+  return { settings: readSettings(), presets: APPEARANCE_PRESETS };
+});
+ipcMain.on('dsh-shell:settings-set', (event, patch) => {
+  if (!isTrustedSender(event)) return;
+  const appearance = sanitizeAppearance(patch && patch.appearance);
+  if (!appearance) return;
+  writeSettings({ appearance });
+  applyAppearanceCss(mainWindow); // 立即生效：重新注入主窗口
+});
+
+// 标题栏主题同步（v0.12.x）：preload 观察 DSH 页面 <html style="color-scheme"> 变化上报。
+// macOS 标题栏颜色跟随 nativeTheme.themeSource；此同步让壳 UI（标题栏/loading/error 页
+// 的 prefers-color-scheme 适配）与 DSH 页面主题一致。启动时 themeSource 保持默认 'system'
+// 不变——页面加载后 preload 会立刻上报一次实际主题并覆盖。null/未知值忽略。
+let lastShellTheme = null;
+ipcMain.on('dsh-shell:theme', (event, theme) => {
+  if (!isTrustedSender(event)) return;
+  if (theme !== 'dark' && theme !== 'light') return;
+  // 标题栏始终跟随页面实际主题（2026-08-16：移除外观存在时忽略上报的守卫——外观
+  // 设置通过强制页面 colorScheme 间接驱动标题栏，页面手动切主题也实时跟随）
+  nativeTheme.themeSource = theme;
+  // 窗口背景与页面背景一致（深色 #151517），避免缩放/过渡时白闪
+  if (mainWindow) mainWindow.setBackgroundColor(theme === 'dark' ? '#151517' : '#ffffff');
+  if (theme !== lastShellTheme) { // 去重：仅在切换时打一次日志，不刷屏
+    lastShellTheme = theme;
+    console.log('[dsh-shell] 页面主题切换:', theme);
+  }
 });
