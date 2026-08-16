@@ -130,6 +130,7 @@ jobs:
             dsh-shell/app/dist/*.exe
             dsh-shell/app/dist/*.AppImage
             dsh-shell/app/dist/*.deb
+            dsh-shell/app/dist/*.yml
 
   release:
     needs: build

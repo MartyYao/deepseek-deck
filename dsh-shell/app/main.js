@@ -1,6 +1,10 @@
-// dsh-shell app — Electron 主进程（v0.12.0, 2026-08-15；三平台 + 双更新通道版）
+// dsh-shell app — Electron 主进程（v0.14.0, 2026-08-16；win/linux 全自动更新版）
+// v0.14.0：win/linux Deck 自身更新改全自动（electron-updater + generic provider：
+//         下载→弹窗确认→重启安装）；mac 保持 atom 检测 + 手动下载引导（自动更新需
+//         Apple 签名证书，暂不引入）。generic provider 指向 releases/latest/download
+//         （github.com 域名国内可达；默认 GitHub provider 走 api.github.com 必失败）。
 // v0.12.0：dsh 更新检测 + 一键更新（bundled 运行时首启迁 userData，包内 Resources 只读不可写）；
-//         Deck 更新引导增强（弹窗「下载并安装」→ 下载对应平台安装包，方案 A 不引入 electron-updater）。
+//         Deck 更新引导增强（弹窗「下载并安装」→ 下载对应平台安装包）。
 // 未发版累积（2026-08-16）：外观设置 v2——整板换肤（覆盖 --dsw-static-neutral-bluish-* 19 级）、
 //         字号改 Chromium zoom、标题栏联动 nativeTheme、DSH_SHELL_DEBUG 调试端口。
 // 独立桌面壳（Windows / macOS / Linux）：加载 http://127.0.0.1:3080 的 dsh web。
@@ -18,6 +22,7 @@ import { execFile, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isMac = process.platform === 'darwin';
@@ -669,6 +674,128 @@ async function loadOrStart() {
   }
 }
 
+// ── Deck 自动更新（electron-updater + generic provider，仅 win/linux）────────────
+// mac 不引入（自动更新需 Apple 签名证书）——保持下方 atom 检测 + 手动下载引导不变。
+// generic provider 指向 releases/latest/download（app-update.yml 由 electron-builder
+// 打包时按 package.json build.publish 写入）：GitHub latest-release 资产永久重定向，
+// 走 github.com 域名国内可达；默认 GitHub provider 走 api.github.com（国内被分流拦截）。
+// electron-updater 为 CJS 包（main.js 是 ESM），经 createRequire 加载；且仅 win/linux
+// packaged 才 require——开发模式（npm start）无 app-update.yml 会报错，跳过。
+// win 请求 <url>/latest.yml，linux 请求 <url>/latest-linux.yml（CI release.yml 会上传）。
+let autoUpdater = null;
+let updaterManualCheck = false; // 手动检查标记：update-not-available/error 仅手动时提示，静默检查只记日志
+let lastProgressPct = -1;   // 下载进度节流：上次已提示的百分比档位（P1-1）
+let lastProgressAt = 0;     // 下载进度节流：上次提示时间戳（P1-1）
+const updaterLog = (...args) => console.log('[dsh-shell][updater]', ...args);
+const updaterNotify = (body) => { if (Notification.isSupported()) new Notification({ title: APP_TITLE, body }).show(); };
+
+// Linux 安装包类型（P1-2）：electron-builder 打包时写入 resources/package-type，
+// 内容 'deb' / 'AppImage'；读不到（win/mac/开发模式）返回 null。
+// deb 安装走 DebUpdater，而 latest-linux.yml 只含 AppImage 项 → 必失败，需整条路径跳过。
+function linuxPackageType() {
+  if (process.platform !== 'linux' || !app.isPackaged) return null;
+  try {
+    return fs.readFileSync(path.join(process.resourcesPath, 'package-type'), 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+function initAutoUpdater() {
+  if (isMac || !app.isPackaged) return;
+  if (linuxPackageType() === 'deb') { // P1-2：deb 不支持自动更新，不初始化（启动静默检查随 autoUpdater=null 一并跳过）
+    updaterLog('deb 安装，跳过自动更新初始化');
+    return;
+  }
+  try {
+    const require = createRequire(import.meta.url);
+    autoUpdater = require('electron-updater').autoUpdater;
+  } catch (err) {
+    updaterLog('electron-updater 加载失败（跳过自动更新）:', err.message);
+    return;
+  }
+  autoUpdater.autoDownload = true;          // 发现新版即下载
+  autoUpdater.autoInstallOnAppQuit = true;  // 退出时若有已下载更新则安装（quitAndInstall 双保险）
+
+  autoUpdater.on('update-available', (info) => {
+    updaterLog('发现新版本:', info.version);
+    updaterNotify(`发现新版本 v${info.version}，正在下载…`);
+  });
+  autoUpdater.on('update-not-available', (info) => {
+    updaterLog('已是最新版本:', info && info.version);
+    if (updaterManualCheck) {
+      updaterManualCheck = false;
+      updaterNotify(`已是最新版本（v${app.getVersion()}）`);
+    }
+  });
+  autoUpdater.on('download-progress', (p) => {
+    updaterLog(`下载进度 ${Math.round(p.percent)}%（${Math.round((p.bytesPerSecond || 0) / 1024)} KB/s）`);
+    // P1-1：全量下载 5-15 分钟零反馈，加节流通知——每跨 25% 档或距上次 ≥30s（先到者）提示一次；
+    // 100% 不提示（终点由 update-downloaded 负责）
+    const pct = Math.round(p.percent);
+    if (pct >= 100) return;
+    const now = Date.now();
+    if (Math.floor(pct / 25) > Math.floor(lastProgressPct / 25) || now - lastProgressAt >= 30000) {
+      lastProgressPct = pct;
+      lastProgressAt = now;
+      const mbps = ((p.bytesPerSecond || 0) / 1024 / 1024).toFixed(1);
+      updaterNotify(`正在下载更新：${pct}%（${mbps} MB/s）`);
+    }
+  });
+  autoUpdater.on('update-downloaded', async (info) => {
+    updaterLog('更新已下载完成:', info.version);
+    updaterNotify(`新版本 v${info.version} 已下载完成`);
+    try {
+      const { response } = await dialog.showMessageBox({
+        type: 'info',
+        title: '更新已就绪',
+        message: `DeepSeek Deck v${info.version} 已下载完成`,
+        detail: '重启应用完成安装（Windows NSIS 静默覆盖安装；Linux AppImage 直接替换）。',
+        buttons: ['立即重启安装', '稍后'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) {
+        isQuitting = true;
+        autoUpdater.quitAndInstall();
+      }
+    } catch (err) {
+      updaterLog('更新安装弹窗失败:', err.message);
+    }
+  });
+  autoUpdater.on('error', (err) => {
+    updaterLog('更新错误:', err && err.message);
+    if (updaterManualCheck) {
+      updaterManualCheck = false;
+      updaterNotify('检查更新失败，可到 Releases 页手动下载');
+    }
+  });
+}
+
+// 托盘「检查 Deck 更新…」分流：mac → atom 引导（不变）；win/linux → electron-updater。
+// checkForUpdates 返回 promise：失败经 error 事件提示，catch 内按手动标记补提示（防 promise 直接
+// reject 而未触发 error 事件时零反馈）。
+function checkDeckUpdateInteractive() {
+  if (isMac) { checkForUpdates(true); return; }
+  updaterManualCheck = false; // P2-2 卫生项：开头先复位，防上次残留标记造成重复提示
+  if (linuxPackageType() === 'deb') { // P1-2：deb 安装不支持自动更新，明确引导而非报「检查失败」
+    updaterNotify('当前为 deb 安装，暂不支持自动更新，请到 Releases 页手动下载');
+    return;
+  }
+  if (!autoUpdater) { // 开发模式（npm start）无 app-update.yml，自动更新不可用
+    updaterNotify('开发模式下不支持自动更新，请使用安装版或到 Releases 页手动下载');
+    return;
+  }
+  updaterManualCheck = true;
+  autoUpdater.checkForUpdates().catch((err) => {
+    updaterLog('手动检查更新失败:', err && err.message);
+    if (updaterManualCheck) { // P1-2：手动检查合并进已失败/空响应检查时，catch 也要给用户反馈
+      updaterManualCheck = false;
+      updaterNotify('检查更新失败，可到 Releases 页手动下载');
+    }
+  });
+}
+
 // ── 检查更新（GitHub Releases atom，免登录；正则解析无依赖）─────────────────────
 // 仅比较数字段（x.y.z），忽略 pre-release 后缀；a>b → 1，相等 0，a<b → -1
 function compareSemver(a, b) {
@@ -1075,7 +1202,7 @@ function buildTrayMenu(running) {
     { type: 'separator' },
     loginItemMenuItem(),
     { label: '检查 dsh 更新…', click: () => checkDshUpdate(true) },
-    { label: '检查 Deck 更新…', click: () => checkForUpdates(true) },
+    { label: '检查 Deck 更新…', click: () => checkDeckUpdateInteractive() },
     { label: '打开日志目录', click: () => shell.openPath(logsDir()) },
     { type: 'separator' },
     { label: '退出', click: () => { isQuitting = true; app.quit(); } },
@@ -1167,6 +1294,13 @@ if (!gotLock) {
     createWindow();
     if (!process.env.DSH_SHELL_NO_TRAY) createTray();
     await loadOrStart();
+
+    // Deck 自动更新（仅 win/linux packaged）：初始化事件绑定，启动 15s 后静默检查一次
+    // （失败静默只记日志，不打扰用户；手动检查走托盘菜单）
+    initAutoUpdater();
+    if (autoUpdater) {
+      setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}); }, 15000);
+    }
 
     app.on('activate', () => {
       if (!mainWindow) { createWindow(); loadOrStart(); }

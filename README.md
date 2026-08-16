@@ -32,7 +32,7 @@
 - **托盘常驻**：服务运行状态一眼可见；显示/隐藏窗口、启停服务、打开浏览器版、退出，都在托盘
 - **服务自动管理**：启动时自动拉起 dsh 服务，崩溃自动重连；Windows/Linux 退出应用时自动清理服务进程，不留残留
 - **开机自启**（可选）：登录系统后自动运行，随时待命
-- **自动检查更新**：dsh 与 Deck 双更新通道——托盘一键检查 dsh（Harness 本体）新版本并可直接一键升级；Deck 自身有新版本时可一键下载安装包
+- **自动检查更新**：dsh 与 Deck 双更新通道——托盘一键检查 dsh（Harness 本体）新版本并可直接一键升级；**Windows / Linux 上 Deck 自身更新全自动**（发现新版本自动下载，重启即完成安装）；macOS 提供一键下载安装包引导
 - **内置运行时**：安装包捆绑了 Harness 所需的运行环境，与 Harness 本体更新完全解耦——Harness 升级不需要重新安装 Deck
 - **外观设置**：托盘「外观设置…」可自定义界面——背景配色（5 套预设 + 自定义取色）、左侧边栏背景、消息气泡背景、字体颜色、字号，实时生效
 
@@ -56,9 +56,9 @@
 
 | 你的系统 | 下载哪个 | 怎么装 |
 |---|---|---|
-| macOS（Apple 芯片） | `DeepSeek.Harness-0.13.0-arm64.dmg` | 打开 dmg，把应用拖进「应用程序」文件夹 |
-| macOS（Intel） | `DeepSeek.Harness-0.13.0.dmg` | 同上 |
-| Windows | `DeepSeek.Harness.Setup.0.13.0.exe` | 双击安装，一路下一步 |
+| macOS（Apple 芯片） | `DeepSeek.Harness-0.14.0-arm64.dmg` | 打开 dmg，把应用拖进「应用程序」文件夹 |
+| macOS（Intel） | `DeepSeek.Harness-0.14.0.dmg` | 同上 |
+| Windows | `DeepSeek.Harness.Setup.0.14.0.exe` | 双击安装，一路下一步 |
 | Linux | `.AppImage` 或 `.deb` | AppImage：`chmod +x` 后双击；deb：`sudo dpkg -i` 安装 |
 
 > macOS 版本未做代码签名，首次打开如果被系统拦截：右键点击应用 →「打开」即可。Windows 的 SmartScreen 提示选「仍要运行」。

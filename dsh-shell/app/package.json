@@ -1,7 +1,7 @@
 {
   "name": "dsh-shell-app",
   "productName": "DeepSeek Harness",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "DeepSeek Harness 独立桌面壳（Electron，Windows/macOS/Linux）：窗口 + 托盘 + 服务控制。与 DSH 更新完全解耦（纯 HTTP 契约）。",
   "author": "Marty Yao <martyyao@users.noreply.github.com>",
   "homepage": "https://github.com/MartyYao/deepseek-harness-deck",
@@ -14,6 +14,9 @@
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^38.0.0",
     "electron-builder": "^26.0.0"
@@ -21,6 +24,9 @@
   "build": {
     "appId": "local.dsh.shell",
     "productName": "DeepSeek Harness",
+    "publish": [
+      { "provider": "generic", "url": "https://github.com/MartyYao/deepseek-harness-deck/releases/latest/download" }
+    ],
     "files": [
       "main.js",
       "preload.cjs",
@@ -47,6 +53,9 @@
       ],
       "icon": "assets/icon.ico"
     },
+    "nsis": {
+      "artifactName": "DeepSeek.Harness.Setup.${version}.${ext}"
+    },
     "linux": {
       "target": [
         "AppImage",
@@ -54,6 +63,9 @@
       ],
       "icon": "assets/icon.png",
       "category": "Development"
+    },
+    "appImage": {
+      "artifactName": "DeepSeek.Harness-${version}.${ext}"
     }
   },
   "allowScripts": {
