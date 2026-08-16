@@ -130,7 +130,10 @@ jobs:
             dsh-shell/app/dist/*.exe
             dsh-shell/app/dist/*.AppImage
             dsh-shell/app/dist/*.deb
-            dsh-shell/app/dist/*.yml
+            # 自动更新元数据：win 产 latest.yml、linux 产 latest-linux.yml；
+            # 不含 latest-mac.yml（mac 不用自动更新，且两 mac runner 同名资产互撞导致 release 失败）
+            dsh-shell/app/dist/latest.yml
+            dsh-shell/app/dist/latest-linux.yml
 
   release:
     needs: build
