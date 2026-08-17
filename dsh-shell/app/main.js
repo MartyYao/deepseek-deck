@@ -1,9 +1,11 @@
-// dsh-shell app — Electron 主进程（v0.14.0, 2026-08-16；win/linux 全自动更新版）
+// dsh-shell app — Electron 主进程（v0.14.1, 2026-08-18；运行时与更新链路修复）
+// v0.14.1：macOS 服务改用 App 内置 Node + dsh runtime，运行时写入 ~/.dsh/runtime；
+//         修复 rc 版本比较与 Finder/launchd 环境下的 dsh 版本探测。
 // v0.14.0：win/linux Deck 自身更新改全自动（electron-updater + generic provider：
 //         下载→弹窗确认→重启安装）；mac 保持 atom 检测 + 手动下载引导（自动更新需
 //         Apple 签名证书，暂不引入）。generic provider 指向 releases/latest/download
 //         （github.com 域名国内可达；默认 GitHub provider 走 api.github.com 必失败）。
-// v0.12.0：dsh 更新检测 + 一键更新（bundled 运行时首启迁 userData，包内 Resources 只读不可写）；
+// v0.12.0：dsh 更新检测 + 一键更新（bundled 运行时首启迁 ~/.dsh/runtime，包内 Resources 只读）；
 //         Deck 更新引导增强（弹窗「下载并安装」→ 下载对应平台安装包）。
 // 未发版累积（2026-08-16）：外观设置 v2——整板换肤（覆盖 --dsw-static-neutral-bluish-* 19 级）、
 //         字号改 Chromium zoom、标题栏联动 nativeTheme、DSH_SHELL_DEBUG 调试端口。
@@ -23,6 +25,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { compareSemver } from './version.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isMac = process.platform === 'darwin';
@@ -67,9 +70,9 @@ let lastTrayRunning = null; // 托盘菜单顶部只读项含服务状态：状�
 let lastNotifiedSpawnError = null; // P2-2：同一 spawn 失败只通知一次（引用比较去重）
 
 // ── 命令执行（child_process；macOS 下只发 launchctl，不 spawn 服务本身）────────────
-function run(cmd, args) {
+function run(cmd, args, options = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 15000 }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout: 15000, ...options }, (err, stdout, stderr) => {
       resolve({ code: err ? (err.code ?? 1) : 0, out: String(stdout || '') + String(stderr || '') });
     });
   });
@@ -124,9 +127,11 @@ function dshLogFd() {
 // ── dsh 来源三级查找（win/linux spawn 分支使用）────────────────────────────────
 // 1) DSH_BIN 显式覆盖  2) PATH 中的系统版 dsh（兼容老用户，可随 npm update 升级）
 // 3) 安装包捆绑运行时（免安装：官方 Node 二进制 + 预装的 @deepseek-ai/dsh）
-// v0.12.0：捆绑运行时拆两级——userData 副本优先（可写，一键更新落在它上面），
+// v0.12.0：捆绑运行时拆两级——~/.dsh 副本优先（可写，一键更新落在它上面），
 // resources 兜底（app 包内 Resources/ 受签名/权限保护只读，仅首启迁移失败时用到）。
-const runtimeDir = () => path.join(app.getPath('userData'), 'dsh-runtime');
+// Writable dsh runtime lives under the dsh home; the app resource is read-only fallback.
+const dshHomeDir = () => process.env.DSH_HOME || path.join(process.env.HOME || app.getPath('home'), '.dsh');
+const runtimeDir = () => path.join(dshHomeDir(), 'runtime');
 const resourcesRuntimeDir = () => path.join(process.resourcesPath, 'dsh-runtime');
 const dshCliIn = (root) => path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
 const dshPkgIn = (root) => path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'package.json');
@@ -155,20 +160,31 @@ function findOnPath(name) {
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     if (!dir) continue;
     for (const ext of exts) {
-      try { fs.accessSync(path.join(dir, name + ext), fs.constants.X_OK); return true; } catch { /* 继续找 */ }
+      const candidate = path.join(dir, name + ext);
+      try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* 继续找 */ }
     }
   }
-  return false;
+  return null;
 }
 
-function resolveDsh() {
-  if (process.env.DSH_BIN) return { kind: 'env', bin: process.env.DSH_BIN, args: ['web'], shell: isWin };
-  if (findOnPath('dsh')) return { kind: 'system', bin: 'dsh', args: ['web'], shell: isWin };
-  // 捆绑运行时：直接 spawn node + dsh CLI 入口（bin 经 npm view 确认为 lib/bin.js），不经 shell——
-  // 非 .cmd 无 shell 坑；路径含空格（Windows 安装目录）也无需转义。找不到返回 null。
-  // userData 副本优先，否则回退 resources 只读副本；命中条件 = bin.js + package.json 都存在
-  // （P1-1：半成品迁移目录恰好含 bin.js 但缺 package.json 时不命中，杜绝残缺运行时）。
-  // node 二进制始终用 resources 的——node 随 Deck 版本走，不独立更新。
+// Finder/LaunchServices often starts Electron without the interactive shell PATH.
+// Installed macOS builds use the bundled runtime; system dsh is development fallback.
+function findDshBinary() {
+  const fromPath = findOnPath('dsh');
+  if (fromPath) return fromPath;
+  const home = process.env.HOME;
+  const candidates = home ? [
+    path.join(home, '.npm-global', 'bin', isWin ? 'dsh.cmd' : 'dsh'),
+    path.join(home, '.local', 'bin', isWin ? 'dsh.cmd' : 'dsh')
+  ] : [];
+  if (isMac) candidates.push('/opt/homebrew/bin/dsh', '/usr/local/bin/dsh');
+  for (const candidate of candidates) {
+    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* 继续找 */ }
+  }
+  return null;
+}
+
+function resolveBundledDsh() {
   const nodeBin = path.join(process.resourcesPath, 'node-bin', isWin ? 'node.exe' : 'node');
   for (const [kind, root] of [['bundled-userdata', runtimeDir()], ['bundled-resources', resourcesRuntimeDir()]]) {
     const dshCli = dshCliIn(root);
@@ -177,6 +193,25 @@ function resolveDsh() {
     }
   }
   return null;
+}
+
+function resolveDsh() {
+  if (process.env.DSH_BIN) return { kind: 'env', bin: process.env.DSH_BIN, args: ['web'], shell: isWin };
+  if (isMac) {
+    const bundled = resolveBundledDsh();
+    if (bundled) return bundled;
+    // macOS 的正式服务由 deploy/dsh-web-service.sh 使用内置 Node 启动；
+    // 不再退回 Hermes、npm-global 或其他交互式 PATH。
+    return null;
+  }
+  const systemDsh = findDshBinary();
+  if (systemDsh) return { kind: 'system', bin: systemDsh, args: ['web'], shell: isWin };
+  // 捆绑运行时：直接 spawn node + dsh CLI 入口（bin 经 npm view 确认为 lib/bin.js），不经 shell——
+  // 非 .cmd 无 shell 坑；路径含空格（Windows 安装目录）也无需转义。找不到返回 null。
+  // userData 副本优先，否则回退 resources 只读副本；命中条件 = bin.js + package.json 都存在
+  // （P1-1：半成品迁移目录恰好含 bin.js 但缺 package.json 时不命中，杜绝残缺运行时）。
+  // node 二进制始终用 resources 的——node 随 Deck 版本走，不独立更新。
+  return resolveBundledDsh();
 }
 
 async function spawnDshChild() {
@@ -796,17 +831,6 @@ function checkDeckUpdateInteractive() {
   });
 }
 
-// ── 检查更新（GitHub Releases atom，免登录；正则解析无依赖）─────────────────────
-// 仅比较数字段（x.y.z），忽略 pre-release 后缀；a>b → 1，相等 0，a<b → -1
-function compareSemver(a, b) {
-  const pa = a.split('.').map((s) => parseInt(s, 10) || 0);
-  const pb = b.split('.').map((s) => parseInt(s, 10) || 0);
-  while (pa.length < 3) pa.push(0); // 归一到三段，避免 "0.11" vs "0.11.0" 误判
-  while (pb.length < 3) pb.push(0);
-  for (let i = 0; i < 3; i++) { if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1; }
-  return 0;
-}
-
 // 遍历所有 <entry>，取第一个严格匹配正式版 tag（v?x.y.z）的 tag 原文（如 "v0.12.0"）；
 // 含 - 后缀（rc/beta/alpha）或不含版本号的 prerelease 条目直接跳过——
 // releases.atom 首条不保证是最新正式版。标题正则仅作无 tag 时的兜底（P2-8：兜底也补
@@ -968,12 +992,24 @@ async function fetchLatestDshVersion() {
 }
 
 // shell:true 变体：win 上系统版 dsh 是 dsh.cmd（cmd shim），必须经 cmd.exe 执行（同 spawnDshChild 逻辑）
-function runShell(cmd, args) {
+function runShell(cmd, args, options = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 15000, shell: true }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout: 15000, shell: true, ...options }, (err, stdout, stderr) => {
       resolve({ code: err ? (err.code ?? 1) : 0, out: String(stdout || '') + String(stderr || '') });
     });
   });
+}
+
+// The app launched by Finder receives a minimal PATH. dsh is a node shebang
+// script, so its version probe must see the same Node directory used by the
+// launchd plist; otherwise ENOENT is incorrectly reported as "dsh not found".
+function dshCommandEnv() {
+  const home = process.env.HOME;
+  const nodeDirs = home ? [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.npm-global', 'bin')
+  ] : [];
+  return { ...process.env, PATH: [...nodeDirs, process.env.PATH || ''].filter(Boolean).join(path.delimiter) };
 }
 
 // 当前 dsh 版本，按 resolveDsh 实际命中分支取：
@@ -987,14 +1023,18 @@ async function currentDshVersion(resolved) {
     } catch { return null; }
   }
   const r = resolved.shell
-    ? await runShell(`"${resolved.bin}"`, ['--version'])
-    : await run(resolved.bin, ['--version']);
+    ? await runShell(`"${resolved.bin}"`, ['--version'], { env: dshCommandEnv() })
+    : await run(resolved.bin, ['--version'], { env: dshCommandEnv() });
+  if (r.code !== 0) {
+    console.log('[dsh-shell] dsh version probe failed:', r.out.trim().slice(0, 300));
+    return null;
+  }
   const m = r.out.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/);
   return m ? m[0] : null;
 }
 
-// interactive=true（托盘菜单点击）：有新版弹窗——bundled 分支（仅非 mac，P1-2）给「立即更新」，
-// env/system 及 mac 一律给升级命令 + 「复制命令」；无新版/失败仅 Notification。
+// interactive=true（托盘菜单点击）：bundled 分支给「立即更新」，
+// env/system 分支给升级命令 + 「复制命令」；无新版/失败仅 Notification。
 // interactive=false：有新版仅 Notification，不弹窗。
 // 与 Deck 检查共用 updateCheckInFlight 防重；更新执行期间（dshUpdateInFlight）直接提示进行中。
 async function checkDshUpdate(interactive) {
@@ -1024,11 +1064,7 @@ async function checkDshUpdate(interactive) {
     }
     if (compareSemver(latest, current) > 0) {
       const bundled = resolved.kind.startsWith('bundled');
-      // P1-2：mac 服务由 launchd 按 plist 硬编码路径拉起（系统 dsh），从不读捆绑/userData
-      // 运行时——mac 上「立即更新」装进 userData 是无效更新且提示误导，一律走 system 式
-      // 弹窗（显示升级命令 + 复制按钮）。mac 端若要捆绑运行时服务，需后续改造
-      // plist/launcher 指向 resources/node-bin + userData 运行时（后置版本）。
-      const oneClick = bundled && !isMac;
+      const oneClick = bundled;
       console.log(`[dsh-shell] 发现 dsh 新版本 ${latest}（当前 ${current}，来源 ${resolved.kind}）`);
       if (interactive) {
         const { response } = await dialog.showMessageBox(oneClick ? {
@@ -1044,7 +1080,7 @@ async function checkDshUpdate(interactive) {
           title: 'dsh 更新',
           message: `dsh ${latest} 已发布`,
           detail: isMac
-            ? `当前版本 ${current}。mac 服务由 launchd 托管（系统 dsh），请在终端手动升级：\n\nnpm i -g @deepseek-ai/dsh@latest`
+            ? `当前版本 ${current}。dsh 由壳内置 Node 托管，请使用壳内置的一键更新。`
             : `当前版本 ${current}。当前 dsh 来自${resolved.kind === 'env' ? ' DSH_BIN 环境变量' : '系统 PATH'}，请在终端手动升级：\n\nnpm i -g @deepseek-ai/dsh@latest`,
           buttons: ['复制升级命令', '稍后'],
           defaultId: 0,
@@ -1079,7 +1115,7 @@ async function checkDshUpdate(interactive) {
 // 供应链信任边界（P2-4 文档化）：npm CLI tgz 本身无 SRI 校验、下载即解压执行，信任
 // npmmirror HTTPS + 固定版本 + 固定 host；dsh 包本体由 npm 自带 dist.integrity 校验。
 const NPM_CLI_VERSION = '10.9.4';
-const npmCliDir = () => path.join(app.getPath('userData'), 'npm-cli');
+const npmCliDir = () => path.join(dshHomeDir(), 'npm-cli');
 
 async function ensureNpmCli() {
   const bundledCli = path.join(resourcesRuntimeDir(), 'node_modules', 'npm', 'bin', 'npm-cli.js');
@@ -1119,7 +1155,7 @@ let dshUpdateInFlight = false;
 async function updateDsh(latest) {
   if (dshUpdateInFlight) return;
   const resolved = resolveDsh();
-  if (isMac || !resolved || !resolved.kind.startsWith('bundled')) return; // 仅非 mac 的 bundled 可一键更新（P1-2：mac 服务走 launchd 系统 dsh，装 userData 无效）
+  if (!resolved || !resolved.kind.startsWith('bundled')) return;
   dshUpdateInFlight = true;
   const notify = (body) => { if (Notification.isSupported()) new Notification({ title: APP_TITLE, body }).show(); };
   const logPath = path.join(logsDir(), 'dsh-update.log');
@@ -1127,7 +1163,7 @@ async function updateDsh(latest) {
     notify('dsh 更新中…（约 1-3 分钟）');
     const npmCli = await ensureNpmCli();
     const nodeBin = path.join(process.resourcesPath, 'node-bin', isWin ? 'node.exe' : 'node');
-    const target = runtimeDir(); // 更新落 userData 副本（resources 包内目录只读）
+    const target = runtimeDir(); // 更新落 ~/.dsh/runtime（resources 包内目录只读）
     const args = [npmCli, 'install', '--prefix', target, '@deepseek-ai/dsh@latest',
       '--no-audit', '--no-fund', `--registry=${DSH_REGISTRY}`];
     console.log('[dsh-shell] dsh 更新命令:', nodeBin, args.join(' '));

@@ -1,8 +1,8 @@
 # dsh-shell — DeepSeek Harness 桌面启动体系（源码仓库）
 
-三平台桌面壳（Windows / macOS / Linux），v0.12.0。与 DSH 更新完全解耦：壳只负责
+三平台桌面壳（Windows / macOS / Linux），v0.14.1。与 DSH 更新完全解耦：壳只负责
 "拉起 `dsh web` 服务 + 提供原生窗口/托盘"，不 import 任何 DSH 包、不读 DSH 内部文件。
-v0.12.0 起支持双更新通道：托盘可检查 dsh 新版本并一键更新（bundled 运行时落 userData 副本），
+v0.12.0 起支持双更新通道：托盘可检查 dsh 新版本并一键更新（bundled 运行时落 `~/.dsh/runtime`），
 Deck 自身新版本可一键下载安装包。
 
 ## 壳形态（现状）
@@ -20,7 +20,7 @@ Deck 自身新版本可一键下载安装包。
 ```
 ~/.local/bin/dsh-web-launcher.sh (v2.1)
   ├→ launchctl bootstrap + kickstart ai.dsh.web   ← launchd 托管服务
-  │    责任进程 = node 二进制 → iCloud vault (TCC) 授权按路径命中
+  │    责任进程 = App 内置 node 二进制 → iCloud vault (TCC) 授权按路径命中
   ├→ open ~/Applications/DeepSeek Harness.app     ← Electron 壳（唯一一次 open，无二次打开）
   └→ curl 轮询 3080 就绪（上限 60s，仅确认不重复 open）
 ```
@@ -28,14 +28,15 @@ Deck 自身新版本可一键下载安装包。
   - `~/Library/LaunchAgents/ai.dsh.web.plist`：`RunAtLoad=false`（按需启动）、
     `KeepAlive={SuccessfulExit:false}`（崩溃自动重启，正常退出不重启）
   - 停止 = `launchctl bootout`（卸载 job → KeepAlive 不触发），启动 = `bootstrap` + `kickstart`
+  - dsh 运行时：优先 `~/.dsh/runtime`，首次运行或未更新时回退 App 包内 `Resources/dsh-runtime`；不依赖 Hermes 或全局 npm dsh
   - 日志: `~/.dsh/logs/web.{stdout,stderr}.log`
 
 - **Windows / Linux：壳直接 spawn `dsh web` 子进程**
   - dsh 来源三级查找（`resolveDsh()`）：`DSH_BIN` 覆盖 → PATH 系统版（兼容老用户）→
     安装包捆绑运行时（`resources/node-bin` 官方 Node 22 二进制 + 预装的 @deepseek-ai/dsh，
     bin 入口 `lib/bin.js`，spawn node + CLI 不经 shell）。
-    v0.12.0 起捆绑运行时拆两级：首启把 `resources/dsh-runtime` 迁到 `userData/dsh-runtime`
-    （包内 Resources 只读不可写），bundled 分支 userData 副本优先、resources 兜底，
+    v0.12.0 起捆绑运行时拆两级：首启把 `resources/dsh-runtime` 迁到 `~/.dsh/runtime`
+    （包内 Resources 只读不可写），bundled 分支 `~/.dsh/runtime` 副本优先、resources 兜底，
     dshSource 记为 `bundled-userdata`/`bundled-resources`；node 二进制仍只用 resources 的
   - 壳启动时自动拉起服务，随壳退出自动终止（整棵进程树清理，不留孤儿）：
     Windows 用 `taskkill /pid /T /F`（spawnSync 同步执行），Linux 用负 pid 进程组 SIGTERM
@@ -77,13 +78,15 @@ npm run dist:linux       # Linux：AppImage + deb
 - 像素验证一律用 ffmpeg（自写 PNG 解码器不可靠）
 - plist 变更需下次 `bootout`+`bootstrap` 才生效
 
+- dsh 版本检查必须比较完整 SemVer；`0.1.0-rc.7` 高于 `0.1.0-rc.6`，不能只比较 `x.y.z` 数字段
+
 ## 历史
 
 - 2026-08-15（v0.12.0）：双更新通道——①dsh 更新检测（npmmirror registry，8s 超时）+
-  bundled 一键更新：捆绑运行时首启迁 `userData/dsh-runtime`（resolveDsh bundled 拆
+  bundled 一键更新：捆绑运行时首启迁 `~/.dsh/runtime`（resolveDsh bundled 拆
   `bundled-userdata`/`bundled-resources` 两级），用捆绑 node 跑 npm CLI（包内未捆绑 npm，
-  运行时从 npmmirror 下载 npm 10.9.4 解到 userData 缓存）执行
-  `install --prefix userData/dsh-runtime @deepseek-ai/dsh@latest`，完成后 `--version` 校验，
+  运行时从 npmmirror 下载 npm 10.9.4 解到 `~/.dsh/npm-cli` 缓存）执行
+  `install --prefix ~/.dsh/runtime @deepseek-ai/dsh@latest`，完成后 `--version` 校验，
   不自动重启服务；env/system 分支只给升级命令 + 复制。②Deck 更新引导增强：弹窗新增
   「下载并安装」→ 按平台拼资产 URL（tag 原文走 `/download/<tag>/`，文件名段不带 v 前缀，
   已对照实际 Release 资产核实）用 `session.downloadURL` 下载到下载目录，失败保留

@@ -6,6 +6,13 @@
 
 > 个人制作桌面版，非 DeepSeek 官方产品。
 
+## v0.14.1 更新
+
+- macOS 服务改用 App 内置 Node 和 dsh runtime，彻底脱离 Hermes 与全局 npm dsh
+- dsh 可写运行时统一放在 `~/.dsh/runtime`，App 内资源作为只读 fallback
+- 修复 `0.1.0-rc.7` 等预发布版本的更新比较与 Finder/launchd 环境下的版本探测
+- 修复 macOS launchd 服务更新后壳与 dsh 本体脱节的问题
+
 ## 这是什么？
 
 **DeepSeek Harness** 是 DeepSeek 官方的 AI 智能体工作台。简单说：它是一个跑在你电脑上的 AI 工作环境，能帮你写代码、查资料、建知识库、编排多步骤任务。官方版本是一个本地网页服务，平时你得开浏览器、输入网址才能用。
@@ -56,9 +63,9 @@
 
 | 你的系统 | 下载哪个 | 怎么装 |
 |---|---|---|
-| macOS（Apple 芯片） | `DeepSeek.Harness-0.14.0-arm64.dmg` | 打开 dmg，把应用拖进「应用程序」文件夹 |
-| macOS（Intel） | `DeepSeek.Harness-0.14.0.dmg` | 同上 |
-| Windows | `DeepSeek.Harness.Setup.0.14.0.exe` | 双击安装，一路下一步 |
+| macOS（Apple 芯片） | `DeepSeek.Harness-0.14.1-arm64.dmg` | 打开 dmg，把应用拖进「应用程序」文件夹 |
+| macOS（Intel） | `DeepSeek.Harness-0.14.1.dmg` | 同上 |
+| Windows | `DeepSeek.Harness.Setup.0.14.1.exe` | 双击安装，一路下一步 |
 | Linux | `.AppImage` 或 `.deb` | AppImage：`chmod +x` 后双击；deb：`sudo dpkg -i` 安装 |
 
 > macOS 版本未做代码签名，首次打开如果被系统拦截：右键点击应用 →「打开」即可。Windows 的 SmartScreen 提示选「仍要运行」。
@@ -73,12 +80,12 @@
 
 Deck 有两条独立的更新通道，都在托盘菜单里：
 
-- **检查 dsh 更新…**：检测 Harness 本体（dsh）新版本。使用内置运行时的安装可直接「立即更新」（约 1-3 分钟，更新落在应用数据目录，完成后按提示重启服务生效）；使用系统安装的 dsh 则给出升级命令一键复制。
+- **检查 dsh 更新…**：检测 Harness 本体（dsh）新版本。使用内置运行时的安装可直接「立即更新」（约 1-3 分钟，更新落在 `~/.dsh/runtime`，完成后按提示重启服务生效）；使用系统安装的 dsh 则给出升级命令一键复制。
 - **检查 Deck 更新…**：检测 Deck 自身新版本，可「下载并安装」——自动下载对应平台的安装包到下载目录并打开所在文件夹，手动运行覆盖安装即可。
 
 ### 已知限制
 
-- 首次启动会把内置运行时（约 350MB）复制到应用数据目录（`userData/dsh-runtime`），dsh 一键更新也落在这里——磁盘上会同时存在安装包内与数据目录两份运行时，属预期设计（安装包内的只读副本作为兜底，不可写）。
+- 首次启动会把内置运行时（约 350MB）复制到 dsh 全局目录（`~/.dsh/runtime`），dsh 一键更新也落在这里——磁盘上会同时存在安装包内与 dsh 目录两份运行时，属预期设计（安装包内的只读副本作为兜底，不可写）。
 - 更新 dsh 后服务不会自动重启，需托盘手动重启服务或重启应用。
 - Linux 仅自动下载 AppImage；`.deb` 请到 Releases 页面手动下载。
 

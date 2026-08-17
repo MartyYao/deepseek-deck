@@ -1,7 +1,7 @@
 {
   "name": "dsh-shell-app",
   "productName": "DeepSeek Harness",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "DeepSeek Harness 独立桌面壳（Electron，Windows/macOS/Linux）：窗口 + 托盘 + 服务控制。与 DSH 更新完全解耦（纯 HTTP 契约）。",
   "author": "Marty Yao <martyyao@users.noreply.github.com>",
   "homepage": "https://github.com/MartyYao/deepseek-harness-deck",
@@ -9,6 +9,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test test/*.test.js",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
@@ -29,6 +30,7 @@
     ],
     "files": [
       "main.js",
+      "version.js",
       "preload.cjs",
       "assets/**"
     ],
