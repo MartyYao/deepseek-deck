@@ -1,4 +1,5 @@
-// dsh-shell app — Electron 主进程（v0.14.1, 2026-08-18；运行时与更新链路修复）
+// dsh-shell app — Electron 主进程（v0.14.2, 2026-08-18；dsh-tools runtime identity 修复）
+// v0.14.2：macOS launchd 服务启动前校准 web profile 的 dsh-tools 物理路径，防止工具调度器 symbol 分裂。
 // v0.14.1：macOS 服务改用 App 内置 Node + dsh runtime，运行时写入 ~/.dsh/runtime；
 //         修复 rc 版本比较与 Finder/launchd 环境下的 dsh 版本探测。
 // v0.14.0：win/linux Deck 自身更新改全自动（electron-updater + generic provider：

@@ -1,6 +1,6 @@
 # dsh-shell — DeepSeek Harness 桌面启动体系（源码仓库）
 
-三平台桌面壳（Windows / macOS / Linux），v0.14.1。与 DSH 更新完全解耦：壳只负责
+三平台桌面壳（Windows / macOS / Linux），v0.14.2。与 DSH 更新完全解耦：壳只负责
 "拉起 `dsh web` 服务 + 提供原生窗口/托盘"，不 import 任何 DSH 包、不读 DSH 内部文件。
 v0.12.0 起支持双更新通道：托盘可检查 dsh 新版本并一键更新（bundled 运行时落 `~/.dsh/runtime`），
 Deck 自身新版本可一键下载安装包。
@@ -29,6 +29,7 @@ Deck 自身新版本可一键下载安装包。
     `KeepAlive={SuccessfulExit:false}`（崩溃自动重启，正常退出不重启）
   - 停止 = `launchctl bootout`（卸载 job → KeepAlive 不触发），启动 = `bootstrap` + `kickstart`
   - dsh 运行时：优先 `~/.dsh/runtime`，首次运行或未更新时回退 App 包内 `Resources/dsh-runtime`；不依赖 Hermes 或全局 npm dsh
+  - 运行时一致性：web profile 的 `@deepseek-ai/dsh-tools` 必须解析到当前 `DSH_ROOT` 实际使用的同一物理路径；服务启动前会自动校准，发现缺失会明确失败并写入日志，避免工具执行阶段才出现 `undefined.prepare`
   - 日志: `~/.dsh/logs/web.{stdout,stderr}.log`
 
 - **Windows / Linux：壳直接 spawn `dsh web` 子进程**
@@ -79,8 +80,11 @@ npm run dist:linux       # Linux：AppImage + deb
 - plist 变更需下次 `bootout`+`bootstrap` 才生效
 
 - dsh 版本检查必须比较完整 SemVer；`0.1.0-rc.7` 高于 `0.1.0-rc.6`，不能只比较 `x.y.z` 数字段
+- dsh-tools 不能只比较版本号：同版本的不同物理副本仍可能有不同 Cordis symbol；安装/更新插件或 dsh 后，必须让 web profile 指向当前服务 runtime 的实际解析副本
 
 ## 历史
+
+- **v0.14.2（2026-08-18）**：macOS launchd 服务启动前校准 web profile 的 `dsh-tools` 物理路径；兼容 npm hoist 到 runtime 顶层；路径不一致时自动备份、修复并记录日志；构建部署增加路径检查。真实工具调用与壳单测回归通过。
 
 - 2026-08-15（v0.12.0）：双更新通道——①dsh 更新检测（npmmirror registry，8s 超时）+
   bundled 一键更新：捆绑运行时首启迁 `~/.dsh/runtime`（resolveDsh bundled 拆

@@ -6,7 +6,14 @@
 
 > 个人制作桌面版，非 DeepSeek 官方产品。
 
-## v0.14.1 更新
+## v0.14.2 更新
+
+- 修复 macOS 工具调用偶发 `Cannot read properties of undefined (reading 'prepare')`
+- 启动前校准 web profile 的 `@deepseek-ai/dsh-tools`，确保它与当前服务 runtime 使用同一物理副本
+- 兼容 npm 将 `dsh-tools` hoist 到 runtime 顶层的安装结果；路径不一致时自动修复并写入日志
+- 构建部署增加 runtime 路径检查，避免安装包更新后再次引入重复模块
+
+## v0.14.1 更新（此前版本）
 
 - macOS 服务改用 App 内置 Node 和 dsh runtime，彻底脱离 Hermes 与全局 npm dsh
 - dsh 可写运行时统一放在 `~/.dsh/runtime`，App 内资源作为只读 fallback
@@ -63,9 +70,9 @@
 
 | 你的系统 | 下载哪个 | 怎么装 |
 |---|---|---|
-| macOS（Apple 芯片） | `DeepSeek.Harness-0.14.1-arm64.dmg` | 打开 dmg，把应用拖进「应用程序」文件夹 |
-| macOS（Intel） | `DeepSeek.Harness-0.14.1.dmg` | 同上 |
-| Windows | `DeepSeek.Harness.Setup.0.14.1.exe` | 双击安装，一路下一步 |
+| macOS（Apple 芯片） | `DeepSeek.Harness-0.14.2-arm64.dmg` | 打开 dmg，把应用拖进「应用程序」文件夹 |
+| macOS（Intel） | `DeepSeek.Harness-0.14.2.dmg` | 同上 |
+| Windows | `DeepSeek.Harness.Setup.0.14.2.exe` | 双击安装，一路下一步 |
 | Linux | `.AppImage` 或 `.deb` | AppImage：`chmod +x` 后双击；deb：`sudo dpkg -i` 安装 |
 
 > macOS 版本未做代码签名，首次打开如果被系统拦截：右键点击应用 →「打开」即可。Windows 的 SmartScreen 提示选「仍要运行」。
